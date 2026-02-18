@@ -6,6 +6,7 @@ using System.Drawing.Drawing2D;
 using System.IO;
 using System.Linq;
 using System.Text.RegularExpressions;
+using System.Threading;
 using System.Threading.Tasks; // 🔑 Delay için (popup ikon fix)
 using System.Windows.Forms;
 using docsigner_ilter.Services;
@@ -750,35 +751,90 @@ namespace docsigner_ilter
         {
             try
             {
-                using var dialog = new OpenFileDialog
+                if (InvokeRequired)
                 {
-                    Filter = "PDF Dosyalari (*.pdf)|*.pdf",
-                    CheckFileExists = true,
-                    CheckPathExists = true,
-                    Multiselect = false,
-                    RestoreDirectory = true,
-                    AutoUpgradeEnabled = false,
-                    DereferenceLinks = true,
-                    InitialDirectory = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments),
-                    Title = "Imzalanacak PDF Belgesi Secin"
-                };
+                    BeginInvoke((Action)SelectPdfDocument);
+                    return;
+                }
 
-                Cursor.Current = Cursors.Default;
-                var result = dialog.ShowDialog();
-                if (result != DialogResult.OK)
+                string? selectedPath = null;
+                if (Thread.CurrentThread.GetApartmentState() == ApartmentState.STA)
+                {
+                    using var dialog = CreatePdfOpenFileDialog();
+                    Cursor.Current = Cursors.Default;
+                    if (dialog.ShowDialog() == DialogResult.OK)
+                        selectedPath = dialog.FileName;
+                }
+                else
+                {
+                    selectedPath = SelectPdfInStaThread();
+                }
+
+                if (string.IsNullOrWhiteSpace(selectedPath))
                 {
                     SetSignerStatus("Belge secimi iptal edildi.", false, false);
                     return;
                 }
 
-                txtPdfPath.Text = dialog.FileName;
-                SetSignerStatus($"Belge secildi: {Path.GetFileName(dialog.FileName)}", false, false);
+                txtPdfPath.Text = selectedPath;
+                SetSignerStatus($"Belge secildi: {Path.GetFileName(selectedPath)}", false, false);
             }
             catch (Exception ex)
             {
                 SetSignerStatus($"Belge secme hatasi: {ex.Message}", true, false);
                 MessageBox.Show($"Belge secme sirasinda hata olustu:{Environment.NewLine}{ex.Message}", "Hata", MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
+        }
+
+        private static OpenFileDialog CreatePdfOpenFileDialog()
+        {
+            return new OpenFileDialog
+            {
+                Filter = "PDF Dosyalari (*.pdf)|*.pdf",
+                CheckFileExists = true,
+                CheckPathExists = true,
+                Multiselect = false,
+                RestoreDirectory = true,
+                AutoUpgradeEnabled = false,
+                DereferenceLinks = true,
+                InitialDirectory = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments),
+                Title = "Imzalanacak PDF Belgesi Secin"
+            };
+        }
+
+        private static string? SelectPdfInStaThread()
+        {
+            string? selectedPath = null;
+            Exception? capturedException = null;
+            using var completed = new ManualResetEventSlim(false);
+
+            var staThread = new Thread(() =>
+            {
+                try
+                {
+                    using var dialog = CreatePdfOpenFileDialog();
+                    if (dialog.ShowDialog() == DialogResult.OK)
+                        selectedPath = dialog.FileName;
+                }
+                catch (Exception ex)
+                {
+                    capturedException = ex;
+                }
+                finally
+                {
+                    completed.Set();
+                }
+            });
+
+            staThread.IsBackground = true;
+            staThread.SetApartmentState(ApartmentState.STA);
+            staThread.Start();
+            completed.Wait();
+
+            if (capturedException != null)
+                throw capturedException;
+
+            return selectedPath;
         }
 
         private async Task SignSelectedPdfAsync()

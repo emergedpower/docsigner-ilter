@@ -18,7 +18,13 @@ using System.Text.RegularExpressions; // ✅ eklendi (TCKN parse)
 using iText.Bouncycastleconnector;
 using iText.Commons.Bouncycastle.Cert;
 using iText.Forms.Form.Element;
+using iText.IO.Font;
+using iText.IO.Font.Constants;
+using iText.Kernel.Colors;
+using iText.Kernel.Font;
 using iText.Kernel.Pdf;
+using iText.Layout.Borders;
+using iText.Layout.Element;
 using iText.Signatures;
 using PdfRectangle = iText.Kernel.Geom.Rectangle;
 using tr.gov.tubitak.uekae.esya.api.asn.x509;
@@ -344,19 +350,12 @@ namespace docsigner_ilter.Services
                     var signerName = ResolveSignerName(cert, options.SignerDisplayName);
                     var fieldName = BuildFieldName(options.SignatureFieldName);
                     var chain = BuildCertificateChain(cert);
-                    var signatureText = BuildAppearanceText(
+                    bool shouldUseTimestamp = options.EnableTimestamp && !string.IsNullOrWhiteSpace(options.TsaUrl);
+                    var signatureAppearance = BuildSignatureAppearance(
+                        fieldName,
                         signerName,
                         cert,
-                        string.IsNullOrWhiteSpace(options.TsaUrl) ? false : options.EnableTimestamp);
-
-                    using var inputStream = new MemoryStream(pdfContent);
-                    using var outputStream = new MemoryStream();
-                    using var reader = new PdfReader(inputStream);
-
-                    var padesSigner = new PdfPadesSigner(reader, outputStream)
-                        .SetEstimatedSize(24000)
-                        .SetStampingProperties(new StampingProperties().UseAppendMode())
-                        .SetExternalDigest(new BouncyCastleDigest());
+                        shouldUseTimestamp);
 
                     var signerProperties = new SignerProperties()
                         .SetFieldName(fieldName)
@@ -366,12 +365,16 @@ namespace docsigner_ilter.Services
                         .SetSignatureCreator("docsigner-ILTER")
                         .SetReason(string.IsNullOrWhiteSpace(options.Reason) ? "Elektronik imza" : options.Reason)
                         .SetLocation(string.IsNullOrWhiteSpace(options.Location) ? "Türkiye" : options.Location)
-                        .SetSignatureAppearance(new SignatureFieldAppearance(fieldName).SetContent(signerName, signatureText));
+                        .SetSignatureAppearance(signatureAppearance);
 
                     var externalSignature = new Pkcs11ExternalSignature(session, key);
 
+                    var twoPhaseSigner = new PadesTwoPhaseSigningHelper()
+                        .SetEstimatedSize(24000)
+                        .SetStampingProperties(new StampingProperties().UseAppendMode());
+
                     bool timestampApplied = false;
-                    if (options.EnableTimestamp && !string.IsNullOrWhiteSpace(options.TsaUrl))
+                    if (shouldUseTimestamp)
                     {
                         var tsa = new TSAClientBouncyCastle(
                             options.TsaUrl,
@@ -380,15 +383,52 @@ namespace docsigner_ilter.Services
                             8192,
                             "SHA-256");
 
-                        padesSigner.SignWithBaselineTProfile(signerProperties, chain, externalSignature, tsa);
+                        twoPhaseSigner.SetTSAClient(tsa);
                         timestampApplied = true;
                     }
-                    else
+
+                    byte[] preparedPdfBytes;
+                    var cmsContainer = default(iText.Signatures.Cms.CMSContainer)!;
+
+                    using (var prepareInputReader = new PdfReader(new MemoryStream(pdfContent)))
+                    using (var preparedOutputStream = new MemoryStream())
                     {
-                        padesSigner.SignWithBaselineBProfile(signerProperties, chain, externalSignature);
+                        cmsContainer = twoPhaseSigner.CreateCMSContainerWithoutSignature(
+                            chain,
+                            "SHA-256",
+                            prepareInputReader,
+                            preparedOutputStream,
+                            signerProperties);
+
+                        preparedPdfBytes = preparedOutputStream.ToArray();
                     }
 
-                    byte[] signedPdfBytes = outputStream.ToArray();
+                    byte[] signedPdfBytes;
+                    using (var preparedReader = new PdfReader(new MemoryStream(preparedPdfBytes)))
+                    using (var finalOutputStream = new MemoryStream())
+                    {
+                        if (timestampApplied)
+                        {
+                            twoPhaseSigner.SignCMSContainerWithBaselineTProfile(
+                                externalSignature,
+                                preparedReader,
+                                finalOutputStream,
+                                fieldName,
+                                cmsContainer);
+                        }
+                        else
+                        {
+                            twoPhaseSigner.SignCMSContainerWithBaselineBProfile(
+                                externalSignature,
+                                preparedReader,
+                                finalOutputStream,
+                                fieldName,
+                                cmsContainer);
+                        }
+
+                        signedPdfBytes = finalOutputStream.ToArray();
+                    }
+
                     string outputPath = Path.Combine(workDir, BuildSignedPdfFileName(options.FileName));
                     File.WriteAllBytes(outputPath, signedPdfBytes);
 
@@ -932,8 +972,8 @@ namespace docsigner_ilter.Services
             float maxWidth = Math.Max(120f, pageRect.GetWidth() - (margin * 2f));
             float maxHeight = Math.Max(60f, pageRect.GetHeight() - (margin * 2f));
 
-            float width = Math.Clamp(options.Width ?? 240f, 120f, maxWidth);
-            float height = Math.Clamp(options.Height ?? 96f, 60f, maxHeight);
+            float width = Math.Clamp(options.Width ?? 300f, 180f, maxWidth);
+            float height = Math.Clamp(options.Height ?? 128f, 80f, maxHeight);
 
             float x = options.X ?? (pageRect.GetWidth() - width - margin);
             float y = options.Y ?? margin;
@@ -997,23 +1037,117 @@ namespace docsigner_ilter.Services
             return $"{baseName}-{DateTime.Now:yyyyMMddHHmmssfff}.pdf";
         }
 
-        private static string BuildAppearanceText(string signerName, X509Certificate2 cert, bool timestampEnabled)
+        private static SignatureFieldAppearance BuildSignatureAppearance(
+            string fieldName,
+            string signerName,
+            X509Certificate2 cert,
+            bool timestampEnabled)
         {
-            var lines = new List<string>
-            {
-                $"Imza Sahibi: {signerName}"
-            };
-
+            var (regularFont, boldFont) = ResolveSignatureFonts();
+            string signDateText = DateTime.Now.ToString("dd.MM.yyyy HH:mm:ss zzz", CultureInfo.GetCultureInfo("tr-TR"));
             string? tckn = ExtractTcknFromCert(cert);
+
+            var signatureCard = new Div()
+                .SetPadding(4f)
+                .SetMargin(0f)
+                .SetBackgroundColor(new DeviceRgb(248, 251, 255))
+                .SetBorder(new SolidBorder(new DeviceRgb(28, 69, 120), 0.8f));
+
+            signatureCard.Add(new Paragraph("ELEKTRONİK İMZA")
+                .SetFont(boldFont)
+                .SetFontSize(8.3f)
+                .SetMargin(0f)
+                .SetMultipliedLeading(1.0f)
+                .SetFontColor(new DeviceRgb(21, 72, 128)));
+
+            signatureCard.Add(new Paragraph($"İmza Sahibi: {signerName}")
+                .SetFont(boldFont)
+                .SetFontSize(9.7f)
+                .SetMarginTop(2f)
+                .SetMarginBottom(0f)
+                .SetMultipliedLeading(1.0f));
+
             if (!string.IsNullOrWhiteSpace(tckn))
-                lines.Add($"TCKN: {tckn}");
+            {
+                signatureCard.Add(new Paragraph($"TCKN: {tckn}")
+                    .SetFont(regularFont)
+                    .SetFontSize(8.8f)
+                    .SetMargin(0f)
+                    .SetMultipliedLeading(1.0f));
+            }
 
-            lines.Add($"Imza Tarihi: {DateTime.Now:dd.MM.yyyy HH:mm:ss zzz}");
-            lines.Add(timestampEnabled
-                ? "Bu belge elektronik imza ile imzalanmistir ve zaman damgasi eklenmistir."
-                : "Bu belge elektronik imza ile imzalanmistir.");
+            signatureCard.Add(new Paragraph($"İmza Tarihi: {signDateText}")
+                .SetFont(regularFont)
+                .SetFontSize(8.0f)
+                .SetMarginTop(1.5f)
+                .SetMarginBottom(0f)
+                .SetMultipliedLeading(1.0f)
+                .SetFontColor(new DeviceRgb(35, 57, 82)));
 
-            return string.Join(Environment.NewLine, lines);
+            signatureCard.Add(new Paragraph("Bu belge elektronik imza ile imzalanmıştır.")
+                .SetFont(regularFont)
+                .SetFontSize(8.0f)
+                .SetMarginTop(1.5f)
+                .SetMarginBottom(0f)
+                .SetMultipliedLeading(1.0f)
+                .SetFontColor(new DeviceRgb(35, 57, 82)));
+
+            if (timestampEnabled)
+            {
+                signatureCard.Add(new Paragraph("Zaman damgası eklenmiştir.")
+                    .SetFont(regularFont)
+                    .SetFontSize(7.8f)
+                    .SetMarginTop(1f)
+                    .SetMarginBottom(0f)
+                    .SetMultipliedLeading(1.0f)
+                    .SetFontColor(new DeviceRgb(18, 109, 79)));
+            }
+
+            return new SignatureFieldAppearance(fieldName)
+                .SetBorder(Border.NO_BORDER)
+                .SetContent(signatureCard);
+        }
+
+        private static (PdfFont regular, PdfFont bold) ResolveSignatureFonts()
+        {
+            var regular = CreateEmbeddedUnicodeFont(new[]
+            {
+                @"C:\Windows\Fonts\segoeui.ttf",
+                @"C:\Windows\Fonts\arial.ttf",
+                @"C:\Windows\Fonts\calibri.ttf"
+            });
+
+            var bold = CreateEmbeddedUnicodeFont(new[]
+            {
+                @"C:\Windows\Fonts\segoeuib.ttf",
+                @"C:\Windows\Fonts\arialbd.ttf",
+                @"C:\Windows\Fonts\calibrib.ttf"
+            });
+
+            return (regular, bold);
+        }
+
+        private static PdfFont CreateEmbeddedUnicodeFont(IEnumerable<string> fontCandidates)
+        {
+            foreach (var fontPath in fontCandidates)
+            {
+                if (!File.Exists(fontPath))
+                    continue;
+
+                try
+                {
+                    return PdfFontFactory.CreateFont(
+                        fontPath,
+                        PdfEncodings.IDENTITY_H,
+                        PdfFontFactory.EmbeddingStrategy.PREFER_EMBEDDED);
+                }
+                catch
+                {
+                    // Sonraki font adayına geç.
+                }
+            }
+
+            return PdfFontFactory.CreateFont(StandardFonts.HELVETICA);
         }
 
         private sealed record SignaturePlacement(int PageNumber, PdfRectangle Rect);

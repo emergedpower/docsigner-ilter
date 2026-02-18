@@ -1,0 +1,21 @@
+cat > .gitignore <<'EOF'
+# Visual Studio / VS Code
+.vs/
+.vscode/
+
+# Build outputs
+**/bin/
+**/obj/
+
+# User-specific files
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+
+# Logs
+*.log
+
+# Artifacts (opsiyonel; gerekiyorsa kaldır)
+.artifacts/
+EOF

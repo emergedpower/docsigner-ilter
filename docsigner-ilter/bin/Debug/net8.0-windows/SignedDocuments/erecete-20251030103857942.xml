@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8" standalone="yes"?>
+<imzaliEreceteIlacAciklamaBilgisi>
+ <ereceteNo>12345</ereceteNo>
+ <barkod>8681291090066</barkod>
+ <tesisKodu>11349903</tesisKodu>
+ <doktorTcKimlikNo>15652100404</doktorTcKimlikNo>
+ <ereceteIlacAciklamaBilgisi>
+  <aciklama>asdafas</aciklama>
+  <aciklamaTuru>1</aciklamaTuru>
+ </ereceteIlacAciklamaBilgisi>
+</imzaliEreceteIlacAciklamaBilgisi>

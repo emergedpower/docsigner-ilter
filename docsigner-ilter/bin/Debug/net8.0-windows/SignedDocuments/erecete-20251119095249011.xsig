@@ -1,0 +1,32 @@
+<ds:Signature Id="sig-a8d3fc645b194e929be1f7ad39a73c38" xmlns:ds="http://www.w3.org/2000/09/xmldsig#"><ds:SignedInfo><ds:CanonicalizationMethod Algorithm="http://www.w3.org/TR/2001/REC-xml-c14n-20010315" /><ds:SignatureMethod Algorithm="http://www.w3.org/2001/04/xmldsig-more#rsa-sha256" /><ds:Reference URI="#xades-sp-46ad6d91d28e4ed3835f6333fa3b9ec6" Type="http://uri.etsi.org/01903#SignedProperties"><ds:DigestMethod Algorithm="http://www.w3.org/2001/04/xmlenc#sha256" /><ds:DigestValue>zpga5igSBs14AIbWvzLsCs2D7UMBi0BAgU10pCMnfF8=</ds:DigestValue></ds:Reference><ds:Reference URI="#obj-data"><ds:DigestMethod Algorithm="http://www.w3.org/2001/04/xmlenc#sha256" /><ds:DigestValue>QDBa+jhDY300dvGWbQSklTTtbjazpgpTOvWVfxGTMIs=</ds:DigestValue></ds:Reference></ds:SignedInfo><ds:SignatureValue>cdJpqHzYTvRJ1GA/r83IU1NeXMmyKXGx39TgU0LLd079dnrGtNseZby+kPTlwsbFNuGMzZUXGqca
+TpRvT9h94P+UT+NJiGy5aTVciDsdnAmCIoRwhMobytjzAkamkybB5kg4spR/rWEZGw7JUPdVPtb2
+9lAL3l/bSaHBqYc28VQyJxaIRF/LWAeSpkX9P0K1DQxWrbioMgtycTkj4D8nbnEobfY6gIKvF03z
+mR9+yTE1mHyLdXxdUg8IJ4mvkpC/pNTYp4qALlweiCUpBA7e0SFG/tEZqsFA/k2tibrEjlrCps+W
+hVfTn5n8NGO+gHY2vWTucn9ssvBril4Ea1XQpg==</ds:SignatureValue><ds:Object><xades:QualifyingProperties Target="#sig-a8d3fc645b194e929be1f7ad39a73c38" xmlns:xades="http://uri.etsi.org/01903/v1.3.2#"><xades:SignedProperties Id="xades-sp-46ad6d91d28e4ed3835f6333fa3b9ec6"><xades:SignedSignatureProperties><xades:SigningTime>2025-11-19T06:52:49Z</xades:SigningTime><xades:SigningCertificate><xades:Cert><xades:CertDigest><ds:DigestMethod Algorithm="http://www.w3.org/2001/04/xmlenc#sha256" /><ds:DigestValue>ieX0vMFTeC/DtWCR7i5t7ktW5Ao8XPUaUPP0ca2YfHA=</ds:DigestValue></xades:CertDigest><xades:IssuerSerial><ds:X509IssuerName>CN=TÜRKTRUST Nitelikli Elektronik Sertifika Hizmetleri H7, O=TÜRKTRUST Bilgi İletişim ve Bilişim Güvenliği Hizmetleri A.Ş., OU=Dayanak: T.C. 5070 sayılı Elektronik İmza Kanunu, L=Ankara, C=TR</ds:X509IssuerName><ds:X509SerialNumber>-123745061145876300194566397</ds:X509SerialNumber></xades:IssuerSerial></xades:Cert></xades:SigningCertificate></xades:SignedSignatureProperties><xades:SignedDataObjectProperties><xades:DataObjectFormat ObjectReference="#obj-data"><xades:MimeType>text/xml</xades:MimeType></xades:DataObjectFormat><xades:CommitmentTypeIndication><xades:CommitmentTypeId><xades:Identifier>urn:oid:2.16.792.1.61.0.1.5070.3.1.1</xades:Identifier></xades:CommitmentTypeId><xades:AllSignedDataObjects /><xades:CommitmentTypeQualifier>E-Reçete İmzası</xades:CommitmentTypeQualifier></xades:CommitmentTypeIndication></xades:SignedDataObjectProperties></xades:SignedProperties></xades:QualifyingProperties></ds:Object><ds:Object Id="obj-data" MimeType="text/xml" Encoding="http://www.w3.org/2000/09/xmldsig#base64">PHNlc3Npb25Mb2dpbj48dXNlcklkPnNlc3Npb25fdXNlcjwvdXNlcklkPjx0aW1lc3RhbXA+MjAy
+NS0xMS0xOVQwNjo1Mjo1MTwvdGltZXN0YW1wPjwvc2Vzc2lvbkxvZ2luPg==</ds:Object><ds:KeyInfo><ds:X509Data><ds:X509Certificate>MIIF6jCCBXCgAwIBAgILAy9NBHcKJ8v2o5kwCgYIKoZIzj0EAwMwge0xCzAJBgNVBAYTAlRSMQ8w
+DQYDVQQHDAZBbmthcmExPDA6BgNVBAsMM0RheWFuYWs6IFQuQy4gNTA3MCBzYXnEsWzEsSBFbGVr
+dHJvbmlrIMSwbXphIEthbnVudTFNMEsGA1UECgxEVMOcUktUUlVTVCBCaWxnaSDEsGxldGnFn2lt
+IHZlIEJpbGnFn2ltIEfDvHZlbmxpxJ9pIEhpem1ldGxlcmkgQS7Fni4xQDA+BgNVBAMMN1TDnFJL
+VFJVU1QgTml0ZWxpa2xpIEVsZWt0cm9uaWsgU2VydGlmaWthIEhpem1ldGxlcmkgSDcwHhcNMjQw
+NTIzMTIwMDU3WhcNMjYwNTIzMTIwMDU3WjBSMRQwEgYDVQQFEwsxNTY1MjEwMDQwNDELMAkGA1UE
+BhMCVFIxEjAQBgNVBAcMCcSwU1RBTkJVTDEZMBcGA1UEAwwQRkFUxLBIIEVNUkUgVVpBUjCCASIw
+DQYJKoZIhvcNAQEBBQADggEPADCCAQoCggEBAI4J7xOt2mrgeIe885WnQsYKqpyQXwuf2Cd5AsW9
+UemfxrAziwcUaIDxIN1bSXEk2vKtafsEQydJT6cj35G76U15bq5vINoxUyfKHqvMIL8UfHSe0LVC
+I4bcKKcexSHMHwOwbrGq6xQ3YbEr+z1Vh6+8I/im3cfMFP2yNjC3AFuJGExQG0bJ1Ue3GKQbObMS
+xHkUDwFvNn4J+zmxh/wqek2zCqkrpPZthIx00CSQh2T7mcw8IypsxozlWz7nMHgWoa5oV4fFUxdi
+TLZmxnBCtAIDOaTyqlGpFSOgmULXwT0lpCowD07NoulyTlc/HtvIYM/59mm8uxvqacjw6fQhK30C
+AwEAAaOCAsQwggLAMB8GA1UdIwQYMBaAFAzCXR876I8trUEeET1Sv6G+xMsLMB0GA1UdDgQWBBRb
+0ScB5655u8ulNvvh4h/8PRMXZDAOBgNVHQ8BAf8EBAMCBsAwggETBgNVHSAEggEKMIIBBjCCAQIG
+CWCGGAMAAwEBATCB9DArBggrBgEFBQcCARYfaHR0cDovL3d3dy50dXJrdHJ1c3QuY29tLnRyL3N1
+ZTCBxAYIKwYBBQUHAgIwgbcegbQAQgB1ACAAcwBlAHIAdABpAGYAaQBrAGEALAAgADUAMAA3ADAA
+IABzAGEAeQExAGwBMQAgAEUAbABlAGsAdAByAG8AbgBpAGsAIAEwAG0AegBhACAASwBhAG4AdQBu
+AHUAbgBhACAAZwD2AHIAZQAgAG4AaQB0AGUAbABpAGsAbABpACAAZQBsAGUAawB0AHIAbwBuAGkA
+awAgAHMAZQByAHQAaQBmAGkAawBhAGQBMQByAC4wCQYDVR0TBAIwADBPBgNVHR8ESDBGMESgQqBA
+hj5odHRwOi8vd3d3LnR1cmt0cnVzdC5jb20udHIvc2lsL1RVUktUUlVTVF9OaXRlbGlrbGlfU0lM
+X2g3LmNybDAnBggrBgEFBQcBAwQbMBkwDQYLYIYYAT0AAadOAQEwCAYGBACORgEBMIGrBggrBgEF
+BQcBAQSBnjCBmzBvBggrBgEFBQcwAoZjaHR0cDovL3d3dy50dXJrdHJ1c3QuY29tLnRyL3NlcnRp
+ZmlrYWxhci9UVVJLVFJVU1RfTml0ZWxpa2xpX0VsZWt0cm9uaWtfU2VydGlmaWthX0hpem1ldGxl
+cmlfaDcuY3J0MCgGCCsGAQUFBzABhhxodHRwOi8vb2NzcC50dXJrdHJ1c3QuY29tLnRyMCQGA1Ud
+EQQdMBuBGWZhdGloZW1yZXV6YXJAb3V0bG9vay5jb20wCgYIKoZIzj0EAwMDaAAwZQIxAIh/Y7aD
+d4ee8iUdblJk+It4YLmVxBKbR27AaOJlhqOZ/tTANGNKHq6ANlekNIeOJAIwVRiKWGEad6rAu7lY
+aWlq42QqA2opxe51erjSnX0cgFbTneOd3fYQERg3cTJKaVjO</ds:X509Certificate></ds:X509Data></ds:KeyInfo></ds:Signature>

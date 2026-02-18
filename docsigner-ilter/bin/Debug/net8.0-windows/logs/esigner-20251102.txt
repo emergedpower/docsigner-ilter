@@ -1,0 +1,207 @@
+2025-11-02 22:32:27.018 +03:00 [INF] E-İmza Ajan App Başlatıldı! (http://localhost:5000)
+2025-11-02 22:32:27.079 +03:00 [INF] Endpoints: /health, /devices, /get-subject, /sign-xml (POST). Bekleniyor...
+2025-11-02 22:32:27.290 +03:00 [INF] Lisans yükleniyor: Free | Path: C:\Users\umut3\Desktop\yenii\esigner-ilter\esigner-ilter\bin\Debug\net8.0-windows\Certificates\lisans.xml
+2025-11-02 22:32:27.408 +03:00 [INF] Lisans başarıyla yüklendi: Free
+2025-11-02 22:32:27.410 +03:00 [INF] Lisans başarıyla yüklendi.
+2025-11-02 22:32:27.560 +03:00 [WRN] Overriding address(es) 'http://localhost:5000'. Binding to endpoints defined via IConfiguration and/or UseKestrel() instead.
+2025-11-02 22:32:27.615 +03:00 [INF] Now listening on: http://localhost:5000
+2025-11-02 22:32:27.618 +03:00 [INF] Application started. Press Ctrl+C to shut down.
+2025-11-02 22:32:27.620 +03:00 [INF] Hosting environment: Development
+2025-11-02 22:32:27.622 +03:00 [INF] Content root path: C:\Users\umut3\Desktop\yenii\esigner-ilter\esigner-ilter\bin\Debug\net8.0-windows
+2025-11-02 22:32:27.646 +03:00 [INF] Request starting HTTP/1.1 GET http://localhost:5000/health - null null
+2025-11-02 22:32:27.703 +03:00 [INF] CORS policy execution successful.
+2025-11-02 22:32:27.709 +03:00 [INF] İstek geldi: GET /health from IP 127.0.0.1
+2025-11-02 22:32:27.796 +03:00 [INF] Executing endpoint 'HTTP: GET /health'
+2025-11-02 22:32:27.892 +03:00 [INF] Setting HTTP status code 200.
+2025-11-02 22:32:27.930 +03:00 [INF] Writing value of type '<>f__AnonymousType1`2' as Json.
+2025-11-02 22:32:27.986 +03:00 [INF] Executed endpoint 'HTTP: GET /health'
+2025-11-02 22:32:27.988 +03:00 [INF] İstek tamamlandı: GET /health from 127.0.0.1 in 281ms (Status: 200)
+2025-11-02 22:32:27.994 +03:00 [INF] Request finished HTTP/1.1 GET http://localhost:5000/health - 200 null application/json; charset=utf-8 353.9489ms
+2025-11-02 22:32:28.002 +03:00 [INF] Request starting HTTP/1.1 GET http://localhost:5000/devices - null null
+2025-11-02 22:32:28.007 +03:00 [INF] CORS policy execution successful.
+2025-11-02 22:32:28.009 +03:00 [INF] İstek geldi: GET /devices from IP 127.0.0.1
+2025-11-02 22:32:28.012 +03:00 [INF] Executing endpoint 'HTTP: GET /devices'
+2025-11-02 22:32:28.300 +03:00 [INF] Found 1 terminals.
+2025-11-02 22:32:28.951 +03:00 [INF] Cihaz: ACS ACR39U ICC Reader 0 (08B1CF0B0033003B) - FATİH EMRE UZAR
+2025-11-02 22:32:29.167 +03:00 [INF] GetSignatureDevices çağrıldı. 1 cihaz bulundu.
+2025-11-02 22:32:29.169 +03:00 [INF] Setting HTTP status code 200.
+2025-11-02 22:32:29.180 +03:00 [INF] Writing value of type 'List`1' as Json.
+2025-11-02 22:32:29.184 +03:00 [INF] Executed endpoint 'HTTP: GET /devices'
+2025-11-02 22:32:29.187 +03:00 [INF] İstek tamamlandı: GET /devices from 127.0.0.1 in 1178ms (Status: 200)
+2025-11-02 22:32:29.190 +03:00 [INF] Request finished HTTP/1.1 GET http://localhost:5000/devices - 200 null application/json; charset=utf-8 1189.1264ms
+2025-11-02 22:32:32.798 +03:00 [INF] Request starting HTTP/1.1 OPTIONS http://localhost:5000/sign-xml - null null
+2025-11-02 22:32:32.801 +03:00 [INF] CORS policy execution successful.
+2025-11-02 22:32:32.804 +03:00 [INF] Request finished HTTP/1.1 OPTIONS http://localhost:5000/sign-xml - 204 null null 6.3812ms
+2025-11-02 22:32:32.808 +03:00 [INF] Request starting HTTP/1.1 POST http://localhost:5000/sign-xml - application/json 206
+2025-11-02 22:32:32.811 +03:00 [INF] CORS policy execution successful.
+2025-11-02 22:32:32.813 +03:00 [INF] İstek geldi: POST /sign-xml from IP 127.0.0.1
+2025-11-02 22:32:32.816 +03:00 [INF] Executing endpoint 'HTTP: POST /sign-xml'
+2025-11-02 22:32:32.984 +03:00 [INF] XML parse edildi. Root element: sessionLogin
+2025-11-02 22:32:32.990 +03:00 [INF] Lisans yüklendi: Free
+2025-11-02 22:32:32.992 +03:00 [INF] SmartCardManager başlatılıyor...
+2025-11-02 22:32:33.072 +03:00 [INF] SmartCardManager başlatıldı.
+2025-11-02 22:32:33.074 +03:00 [INF] Sertifika alınıyor...
+2025-11-02 22:32:33.084 +03:00 [INF] Certificate loaded. Subject: tr.gov.tubitak.uekae.esya.api.asn.x509.EName
+2025-11-02 22:32:33.087 +03:00 [INF] xmlsignature-config.xml bulundu: C:\Users\umut3\Desktop\yenii\esigner-ilter\esigner-ilter\bin\Debug\net8.0-windows\config\xmlsignature-config.xml
+2025-11-02 22:32:33.559 +03:00 [INF] İmzalama yapılıyor... ForceFreshLogin: true
+2025-11-02 22:32:36.122 +03:00 [INF] Signed XML Length: 5192
+2025-11-02 22:32:36.124 +03:00 [INF] İmzalı dosya yazıldı: C:\Users\umut3\Desktop\yenii\esigner-ilter\esigner-ilter\bin\Debug\net8.0-windows\SignedDocuments\erecete-20251102223232986.xsig
+2025-11-02 22:32:36.126 +03:00 [INF] İmzalama başarılı: XML uzunluğu 5192, ForceFreshLogin=true, Dosya Yolu: C:\Users\umut3\Desktop\yenii\esigner-ilter\esigner-ilter\bin\Debug\net8.0-windows\SignedDocuments\erecete-20251102223232986.xsig
+2025-11-02 22:32:36.129 +03:00 [INF] Setting HTTP status code 200.
+2025-11-02 22:32:36.132 +03:00 [INF] Writing value of type 'SignXmlResponse' as Json.
+2025-11-02 22:32:36.138 +03:00 [INF] Executed endpoint 'HTTP: POST /sign-xml'
+2025-11-02 22:32:36.140 +03:00 [INF] İstek tamamlandı: POST /sign-xml from 127.0.0.1 in 3326ms (Status: 200)
+2025-11-02 22:32:36.143 +03:00 [INF] Request finished HTTP/1.1 POST http://localhost:5000/sign-xml - 200 null application/json; charset=utf-8 3334.0674ms
+2025-11-02 22:34:47.325 +03:00 [INF] Request starting HTTP/1.1 GET http://localhost:5000/health - null null
+2025-11-02 22:34:47.328 +03:00 [INF] CORS policy execution successful.
+2025-11-02 22:34:47.330 +03:00 [INF] İstek geldi: GET /health from IP 127.0.0.1
+2025-11-02 22:34:47.332 +03:00 [INF] Executing endpoint 'HTTP: GET /health'
+2025-11-02 22:34:47.334 +03:00 [INF] Setting HTTP status code 200.
+2025-11-02 22:34:47.337 +03:00 [INF] Writing value of type '<>f__AnonymousType1`2' as Json.
+2025-11-02 22:34:47.339 +03:00 [INF] Executed endpoint 'HTTP: GET /health'
+2025-11-02 22:34:47.341 +03:00 [INF] İstek tamamlandı: GET /health from 127.0.0.1 in 10ms (Status: 200)
+2025-11-02 22:34:47.343 +03:00 [INF] Request finished HTTP/1.1 GET http://localhost:5000/health - 200 null application/json; charset=utf-8 18.8441ms
+2025-11-02 22:34:47.347 +03:00 [INF] Request starting HTTP/1.1 GET http://localhost:5000/devices - null null
+2025-11-02 22:34:47.350 +03:00 [INF] CORS policy execution successful.
+2025-11-02 22:34:47.351 +03:00 [INF] İstek geldi: GET /devices from IP 127.0.0.1
+2025-11-02 22:34:47.354 +03:00 [INF] Executing endpoint 'HTTP: GET /devices'
+2025-11-02 22:34:47.491 +03:00 [INF] Found 1 terminals.
+2025-11-02 22:34:47.603 +03:00 [INF] Cihaz: ACS ACR39U ICC Reader 0 (08B1CF0B0033003B) - FATİH EMRE UZAR
+2025-11-02 22:34:47.819 +03:00 [INF] GetSignatureDevices çağrıldı. 1 cihaz bulundu.
+2025-11-02 22:34:47.821 +03:00 [INF] Setting HTTP status code 200.
+2025-11-02 22:34:47.823 +03:00 [INF] Writing value of type 'List`1' as Json.
+2025-11-02 22:34:47.825 +03:00 [INF] Executed endpoint 'HTTP: GET /devices'
+2025-11-02 22:34:47.827 +03:00 [INF] İstek tamamlandı: GET /devices from 127.0.0.1 in 475ms (Status: 200)
+2025-11-02 22:34:47.829 +03:00 [INF] Request finished HTTP/1.1 GET http://localhost:5000/devices - 200 null application/json; charset=utf-8 482.1029ms
+2025-11-02 22:34:48.957 +03:00 [INF] Request starting HTTP/1.1 OPTIONS http://localhost:5000/sign-xml - null null
+2025-11-02 22:34:48.960 +03:00 [INF] CORS policy execution successful.
+2025-11-02 22:34:48.962 +03:00 [INF] Request finished HTTP/1.1 OPTIONS http://localhost:5000/sign-xml - 204 null null 5.1827ms
+2025-11-02 22:34:48.966 +03:00 [INF] Request starting HTTP/1.1 POST http://localhost:5000/sign-xml - application/json 206
+2025-11-02 22:34:48.969 +03:00 [INF] CORS policy execution successful.
+2025-11-02 22:34:48.970 +03:00 [INF] İstek geldi: POST /sign-xml from IP 127.0.0.1
+2025-11-02 22:34:48.974 +03:00 [INF] Executing endpoint 'HTTP: POST /sign-xml'
+2025-11-02 22:34:48.976 +03:00 [INF] XML parse edildi. Root element: sessionLogin
+2025-11-02 22:34:48.979 +03:00 [INF] Lisans yüklendi: Free
+2025-11-02 22:34:48.980 +03:00 [INF] SmartCardManager başlatılıyor...
+2025-11-02 22:34:49.065 +03:00 [INF] SmartCardManager başlatıldı.
+2025-11-02 22:34:49.067 +03:00 [INF] Sertifika alınıyor...
+2025-11-02 22:34:49.069 +03:00 [INF] Certificate loaded. Subject: tr.gov.tubitak.uekae.esya.api.asn.x509.EName
+2025-11-02 22:34:49.071 +03:00 [INF] xmlsignature-config.xml bulundu: C:\Users\umut3\Desktop\yenii\esigner-ilter\esigner-ilter\bin\Debug\net8.0-windows\config\xmlsignature-config.xml
+2025-11-02 22:34:49.075 +03:00 [INF] İmzalama yapılıyor... ForceFreshLogin: true
+2025-11-02 22:34:50.895 +03:00 [INF] Signed XML Length: 5193
+2025-11-02 22:34:50.898 +03:00 [INF] İmzalı dosya yazıldı: C:\Users\umut3\Desktop\yenii\esigner-ilter\esigner-ilter\bin\Debug\net8.0-windows\SignedDocuments\erecete-20251102223448978.xsig
+2025-11-02 22:34:50.900 +03:00 [INF] İmzalama başarılı: XML uzunluğu 5193, ForceFreshLogin=true, Dosya Yolu: C:\Users\umut3\Desktop\yenii\esigner-ilter\esigner-ilter\bin\Debug\net8.0-windows\SignedDocuments\erecete-20251102223448978.xsig
+2025-11-02 22:34:50.903 +03:00 [INF] Setting HTTP status code 200.
+2025-11-02 22:34:50.905 +03:00 [INF] Writing value of type 'SignXmlResponse' as Json.
+2025-11-02 22:34:50.907 +03:00 [INF] Executed endpoint 'HTTP: POST /sign-xml'
+2025-11-02 22:34:50.909 +03:00 [INF] İstek tamamlandı: POST /sign-xml from 127.0.0.1 in 1938ms (Status: 200)
+2025-11-02 22:34:50.912 +03:00 [INF] Request finished HTTP/1.1 POST http://localhost:5000/sign-xml - 200 null application/json; charset=utf-8 1945.7628ms
+2025-11-02 22:34:58.730 +03:00 [INF] Request starting HTTP/1.1 OPTIONS http://localhost:5000/sign-xml - null null
+2025-11-02 22:34:58.733 +03:00 [INF] CORS policy execution successful.
+2025-11-02 22:34:58.734 +03:00 [INF] Request finished HTTP/1.1 OPTIONS http://localhost:5000/sign-xml - 204 null null 4.8287ms
+2025-11-02 22:34:58.738 +03:00 [INF] Request starting HTTP/1.1 POST http://localhost:5000/sign-xml - application/json 376
+2025-11-02 22:34:58.741 +03:00 [INF] CORS policy execution successful.
+2025-11-02 22:34:58.743 +03:00 [INF] İstek geldi: POST /sign-xml from IP 127.0.0.1
+2025-11-02 22:34:58.745 +03:00 [INF] Executing endpoint 'HTTP: POST /sign-xml'
+2025-11-02 22:34:58.748 +03:00 [INF] XML parse edildi. Root element: imzaliEreceteListeSorgulaBilgisi
+2025-11-02 22:34:58.751 +03:00 [INF] Lisans yüklendi: Free
+2025-11-02 22:34:58.753 +03:00 [INF] SmartCardManager başlatılıyor...
+2025-11-02 22:34:58.830 +03:00 [INF] SmartCardManager başlatıldı.
+2025-11-02 22:34:58.832 +03:00 [INF] Sertifika alınıyor...
+2025-11-02 22:34:58.834 +03:00 [INF] Certificate loaded. Subject: tr.gov.tubitak.uekae.esya.api.asn.x509.EName
+2025-11-02 22:34:58.836 +03:00 [INF] xmlsignature-config.xml bulundu: C:\Users\umut3\Desktop\yenii\esigner-ilter\esigner-ilter\bin\Debug\net8.0-windows\config\xmlsignature-config.xml
+2025-11-02 22:34:58.840 +03:00 [INF] İmzalama yapılıyor... ForceFreshLogin: true
+2025-11-02 22:35:00.643 +03:00 [INF] Signed XML Length: 5401
+2025-11-02 22:35:00.646 +03:00 [INF] İmzalı dosya yazıldı: C:\Users\umut3\Desktop\yenii\esigner-ilter\esigner-ilter\bin\Debug\net8.0-windows\SignedDocuments\erecete-20251102223458750.xsig
+2025-11-02 22:35:00.647 +03:00 [INF] İmzalama başarılı: XML uzunluğu 5401, ForceFreshLogin=true, Dosya Yolu: C:\Users\umut3\Desktop\yenii\esigner-ilter\esigner-ilter\bin\Debug\net8.0-windows\SignedDocuments\erecete-20251102223458750.xsig
+2025-11-02 22:35:00.649 +03:00 [INF] Setting HTTP status code 200.
+2025-11-02 22:35:00.651 +03:00 [INF] Writing value of type 'SignXmlResponse' as Json.
+2025-11-02 22:35:00.653 +03:00 [INF] Executed endpoint 'HTTP: POST /sign-xml'
+2025-11-02 22:35:00.655 +03:00 [INF] İstek tamamlandı: POST /sign-xml from 127.0.0.1 in 1912ms (Status: 200)
+2025-11-02 22:35:00.658 +03:00 [INF] Request finished HTTP/1.1 POST http://localhost:5000/sign-xml - 200 null application/json; charset=utf-8 1919.9445ms
+2025-11-02 22:35:04.742 +03:00 [INF] Request starting HTTP/1.1 OPTIONS http://localhost:5000/sign-xml - null null
+2025-11-02 22:35:04.745 +03:00 [INF] CORS policy execution successful.
+2025-11-02 22:35:04.746 +03:00 [INF] Request finished HTTP/1.1 OPTIONS http://localhost:5000/sign-xml - 204 null null 4.7195ms
+2025-11-02 22:35:04.750 +03:00 [INF] Request starting HTTP/1.1 POST http://localhost:5000/sign-xml - application/json 350
+2025-11-02 22:35:04.753 +03:00 [INF] CORS policy execution successful.
+2025-11-02 22:35:04.754 +03:00 [INF] İstek geldi: POST /sign-xml from IP 127.0.0.1
+2025-11-02 22:35:04.756 +03:00 [INF] Executing endpoint 'HTTP: POST /sign-xml'
+2025-11-02 22:35:04.759 +03:00 [INF] XML parse edildi. Root element: imzaliEreceteSorgulaBilgisi
+2025-11-02 22:35:04.761 +03:00 [INF] Lisans yüklendi: Free
+2025-11-02 22:35:04.763 +03:00 [INF] SmartCardManager başlatılıyor...
+2025-11-02 22:35:04.853 +03:00 [INF] SmartCardManager başlatıldı.
+2025-11-02 22:35:04.855 +03:00 [INF] Sertifika alınıyor...
+2025-11-02 22:35:04.857 +03:00 [INF] Certificate loaded. Subject: tr.gov.tubitak.uekae.esya.api.asn.x509.EName
+2025-11-02 22:35:04.859 +03:00 [INF] xmlsignature-config.xml bulundu: C:\Users\umut3\Desktop\yenii\esigner-ilter\esigner-ilter\bin\Debug\net8.0-windows\config\xmlsignature-config.xml
+2025-11-02 22:35:04.864 +03:00 [INF] İmzalama yapılıyor... ForceFreshLogin: true
+2025-11-02 22:35:06.664 +03:00 [INF] Signed XML Length: 5365
+2025-11-02 22:35:06.666 +03:00 [INF] İmzalı dosya yazıldı: C:\Users\umut3\Desktop\yenii\esigner-ilter\esigner-ilter\bin\Debug\net8.0-windows\SignedDocuments\erecete-20251102223504760.xsig
+2025-11-02 22:35:06.668 +03:00 [INF] İmzalama başarılı: XML uzunluğu 5365, ForceFreshLogin=true, Dosya Yolu: C:\Users\umut3\Desktop\yenii\esigner-ilter\esigner-ilter\bin\Debug\net8.0-windows\SignedDocuments\erecete-20251102223504760.xsig
+2025-11-02 22:35:06.670 +03:00 [INF] Setting HTTP status code 200.
+2025-11-02 22:35:06.672 +03:00 [INF] Writing value of type 'SignXmlResponse' as Json.
+2025-11-02 22:35:06.674 +03:00 [INF] Executed endpoint 'HTTP: POST /sign-xml'
+2025-11-02 22:35:06.676 +03:00 [INF] İstek tamamlandı: POST /sign-xml from 127.0.0.1 in 1921ms (Status: 200)
+2025-11-02 22:35:06.679 +03:00 [INF] Request finished HTTP/1.1 POST http://localhost:5000/sign-xml - 200 null application/json; charset=utf-8 1928.7716ms
+2025-11-02 23:21:08.660 +03:00 [INF] Request starting HTTP/1.1 GET http://localhost:5000/health - null null
+2025-11-02 23:21:08.665 +03:00 [INF] CORS policy execution successful.
+2025-11-02 23:21:08.668 +03:00 [INF] İstek geldi: GET /health from IP ::1
+2025-11-02 23:21:08.671 +03:00 [INF] Executing endpoint 'HTTP: GET /health'
+2025-11-02 23:21:08.673 +03:00 [INF] Setting HTTP status code 200.
+2025-11-02 23:21:08.676 +03:00 [INF] Writing value of type '<>f__AnonymousType1`2' as Json.
+2025-11-02 23:21:08.678 +03:00 [INF] Executed endpoint 'HTTP: GET /health'
+2025-11-02 23:21:08.681 +03:00 [INF] İstek tamamlandı: GET /health from ::1 in 13ms (Status: 200)
+2025-11-02 23:21:08.685 +03:00 [INF] Request finished HTTP/1.1 GET http://localhost:5000/health - 200 null application/json; charset=utf-8 27.8388ms
+2025-11-02 23:21:08.691 +03:00 [INF] Request starting HTTP/1.1 GET http://localhost:5000/devices - null null
+2025-11-02 23:21:08.702 +03:00 [INF] CORS policy execution successful.
+2025-11-02 23:21:08.705 +03:00 [INF] İstek geldi: GET /devices from IP ::1
+2025-11-02 23:21:08.708 +03:00 [INF] Executing endpoint 'HTTP: GET /devices'
+2025-11-02 23:21:08.717 +03:00 [INF] Kart takılı kart okuyucu bulunamadı.
+2025-11-02 23:21:08.719 +03:00 [INF] Setting HTTP status code 200.
+2025-11-02 23:21:08.722 +03:00 [INF] Writing value of type 'List`1' as Json.
+2025-11-02 23:21:08.725 +03:00 [INF] Executed endpoint 'HTTP: GET /devices'
+2025-11-02 23:21:08.727 +03:00 [INF] İstek tamamlandı: GET /devices from ::1 in 22ms (Status: 200)
+2025-11-02 23:21:08.731 +03:00 [INF] Request finished HTTP/1.1 GET http://localhost:5000/devices - 200 null application/json; charset=utf-8 40.5071ms
+2025-11-02 23:21:25.830 +03:00 [INF] Request starting HTTP/1.1 GET http://localhost:5000/health - null null
+2025-11-02 23:21:25.841 +03:00 [INF] CORS policy execution successful.
+2025-11-02 23:21:25.843 +03:00 [INF] İstek geldi: GET /health from IP ::1
+2025-11-02 23:21:25.847 +03:00 [INF] Executing endpoint 'HTTP: GET /health'
+2025-11-02 23:21:25.850 +03:00 [INF] Setting HTTP status code 200.
+2025-11-02 23:21:25.853 +03:00 [INF] Writing value of type '<>f__AnonymousType1`2' as Json.
+2025-11-02 23:21:25.857 +03:00 [INF] Executed endpoint 'HTTP: GET /health'
+2025-11-02 23:21:25.860 +03:00 [INF] İstek tamamlandı: GET /health from ::1 in 16ms (Status: 200)
+2025-11-02 23:21:25.865 +03:00 [INF] Request finished HTTP/1.1 GET http://localhost:5000/health - 200 null application/json; charset=utf-8 34.4738ms
+2025-11-02 23:21:25.871 +03:00 [INF] Request starting HTTP/1.1 GET http://localhost:5000/devices - null null
+2025-11-02 23:21:25.877 +03:00 [INF] CORS policy execution successful.
+2025-11-02 23:21:25.879 +03:00 [INF] İstek geldi: GET /devices from IP ::1
+2025-11-02 23:21:25.882 +03:00 [INF] Executing endpoint 'HTTP: GET /devices'
+2025-11-02 23:21:25.889 +03:00 [INF] Found 1 terminals.
+2025-11-02 23:21:26.362 +03:00 [INF] Cihaz: ACS ACR39U ICC Reader 0 (08B1CF0B0033003B) - FATİH EMRE UZAR
+2025-11-02 23:21:26.579 +03:00 [INF] GetSignatureDevices çağrıldı. 1 cihaz bulundu.
+2025-11-02 23:21:26.583 +03:00 [INF] Setting HTTP status code 200.
+2025-11-02 23:21:26.586 +03:00 [INF] Writing value of type 'List`1' as Json.
+2025-11-02 23:21:26.589 +03:00 [INF] Executed endpoint 'HTTP: GET /devices'
+2025-11-02 23:21:26.591 +03:00 [INF] İstek tamamlandı: GET /devices from ::1 in 712ms (Status: 200)
+2025-11-02 23:21:26.595 +03:00 [INF] Request finished HTTP/1.1 GET http://localhost:5000/devices - 200 null application/json; charset=utf-8 724.3655ms
+2025-11-02 23:21:27.363 +03:00 [INF] Request starting HTTP/1.1 OPTIONS http://localhost:5000/sign-xml - null null
+2025-11-02 23:21:27.368 +03:00 [INF] CORS policy execution successful.
+2025-11-02 23:21:27.370 +03:00 [INF] Request finished HTTP/1.1 OPTIONS http://localhost:5000/sign-xml - 204 null null 7.0746ms
+2025-11-02 23:21:27.377 +03:00 [INF] Request starting HTTP/1.1 POST http://localhost:5000/sign-xml - application/json 206
+2025-11-02 23:21:27.381 +03:00 [INF] CORS policy execution successful.
+2025-11-02 23:21:27.384 +03:00 [INF] İstek geldi: POST /sign-xml from IP ::1
+2025-11-02 23:21:27.387 +03:00 [INF] Executing endpoint 'HTTP: POST /sign-xml'
+2025-11-02 23:21:27.389 +03:00 [INF] XML parse edildi. Root element: sessionLogin
+2025-11-02 23:21:27.393 +03:00 [INF] Lisans yüklendi: Free
+2025-11-02 23:21:27.396 +03:00 [INF] SmartCardManager başlatılıyor...
+2025-11-02 23:21:27.477 +03:00 [INF] SmartCardManager başlatıldı.
+2025-11-02 23:21:27.480 +03:00 [INF] Sertifika alınıyor...
+2025-11-02 23:21:27.482 +03:00 [INF] Certificate loaded. Subject: tr.gov.tubitak.uekae.esya.api.asn.x509.EName
+2025-11-02 23:21:27.485 +03:00 [INF] xmlsignature-config.xml bulundu: C:\Users\umut3\Desktop\yenii\esigner-ilter\esigner-ilter\bin\Debug\net8.0-windows\config\xmlsignature-config.xml
+2025-11-02 23:21:27.490 +03:00 [INF] İmzalama yapılıyor... ForceFreshLogin: true
+2025-11-02 23:21:30.166 +03:00 [INF] Signed XML Length: 5193
+2025-11-02 23:21:30.169 +03:00 [INF] İmzalı dosya yazıldı: C:\Users\umut3\Desktop\yenii\esigner-ilter\esigner-ilter\bin\Debug\net8.0-windows\SignedDocuments\erecete-20251102232127392.xsig
+2025-11-02 23:21:30.172 +03:00 [INF] İmzalama başarılı: XML uzunluğu 5193, ForceFreshLogin=true, Dosya Yolu: C:\Users\umut3\Desktop\yenii\esigner-ilter\esigner-ilter\bin\Debug\net8.0-windows\SignedDocuments\erecete-20251102232127392.xsig
+2025-11-02 23:21:30.174 +03:00 [INF] Setting HTTP status code 200.
+2025-11-02 23:21:30.177 +03:00 [INF] Writing value of type 'SignXmlResponse' as Json.
+2025-11-02 23:21:30.179 +03:00 [INF] Executed endpoint 'HTTP: POST /sign-xml'
+2025-11-02 23:21:30.182 +03:00 [INF] İstek tamamlandı: POST /sign-xml from ::1 in 2797ms (Status: 200)
+2025-11-02 23:21:30.185 +03:00 [INF] Request finished HTTP/1.1 POST http://localhost:5000/sign-xml - 200 null application/json; charset=utf-8 2808.657ms

@@ -1,0 +1,42 @@
+2025-11-21 23:26:22.098 +03:00 [INF] E-İmza Ajan App Başlatıldı! (http://localhost:5000)
+2025-11-21 23:26:22.128 +03:00 [INF] Endpoints: /health, /devices, /get-subject, /sign-xml (POST). Bekleniyor...
+2025-11-21 23:26:22.129 +03:00 [INF] Lisans gereksiz: uygulama manuel imzalama modunda çalışıyor.
+2025-11-21 23:26:22.231 +03:00 [WRN] Overriding address(es) 'http://localhost:5000'. Binding to endpoints defined via IConfiguration and/or UseKestrel() instead.
+2025-11-21 23:26:22.272 +03:00 [INF] Now listening on: http://localhost:5000
+2025-11-21 23:26:22.273 +03:00 [INF] Application started. Press Ctrl+C to shut down.
+2025-11-21 23:26:22.275 +03:00 [INF] Hosting environment: Development
+2025-11-21 23:26:22.276 +03:00 [INF] Content root path: C:\Users\umut3\Desktop\yenii\pkcs11interoplu\esigner-ilter\bin\Debug\net8.0-windows
+2025-11-21 23:29:20.999 +03:00 [INF] Request starting HTTP/1.1 GET http://localhost:5000/health - null null
+2025-11-21 23:29:21.059 +03:00 [INF] CORS policy execution successful.
+2025-11-21 23:29:21.064 +03:00 [INF] İstek geldi: GET /health from IP ::1
+2025-11-21 23:29:21.070 +03:00 [INF] Executing endpoint 'HTTP: GET /health'
+2025-11-21 23:29:21.081 +03:00 [INF] Setting HTTP status code 200.
+2025-11-21 23:29:21.114 +03:00 [INF] Writing value of type '<>f__AnonymousType1`2' as Json.
+2025-11-21 23:29:21.135 +03:00 [INF] Executed endpoint 'HTTP: GET /health'
+2025-11-21 23:29:21.137 +03:00 [INF] İstek tamamlandı: GET /health from ::1 in 74ms (Status: 200)
+2025-11-21 23:29:21.139 +03:00 [INF] Request finished HTTP/1.1 GET http://localhost:5000/health - 200 null application/json; charset=utf-8 145.72ms
+2025-11-21 23:29:21.146 +03:00 [INF] Request starting HTTP/1.1 GET http://localhost:5000/devices - null null
+2025-11-21 23:29:21.148 +03:00 [INF] CORS policy execution successful.
+2025-11-21 23:29:21.149 +03:00 [INF] İstek geldi: GET /devices from IP ::1
+2025-11-21 23:29:21.150 +03:00 [INF] Executing endpoint 'HTTP: GET /devices'
+2025-11-21 23:29:21.828 +03:00 [INF] Setting HTTP status code 200.
+2025-11-21 23:29:21.839 +03:00 [INF] Writing value of type 'List`1' as Json.
+2025-11-21 23:29:21.843 +03:00 [INF] Executed endpoint 'HTTP: GET /devices'
+2025-11-21 23:29:21.844 +03:00 [INF] İstek tamamlandı: GET /devices from ::1 in 695ms (Status: 200)
+2025-11-21 23:29:21.846 +03:00 [INF] Request finished HTTP/1.1 GET http://localhost:5000/devices - 200 null application/json; charset=utf-8 700.4728ms
+2025-11-21 23:29:23.527 +03:00 [INF] Request starting HTTP/1.1 OPTIONS http://localhost:5000/sign-xml - null null
+2025-11-21 23:29:23.529 +03:00 [INF] CORS policy execution successful.
+2025-11-21 23:29:23.531 +03:00 [INF] Request finished HTTP/1.1 OPTIONS http://localhost:5000/sign-xml - 204 null null 4.201ms
+2025-11-21 23:29:23.533 +03:00 [INF] Request starting HTTP/1.1 POST http://localhost:5000/sign-xml - application/json 206
+2025-11-21 23:29:23.534 +03:00 [INF] CORS policy execution successful.
+2025-11-21 23:29:23.535 +03:00 [INF] İstek geldi: POST /sign-xml from IP ::1
+2025-11-21 23:29:23.536 +03:00 [INF] Executing endpoint 'HTTP: POST /sign-xml'
+2025-11-21 23:29:23.569 +03:00 [INF] Orijinal XML kaydedildi: C:\Users\umut3\Desktop\yenii\pkcs11interoplu\esigner-ilter\bin\Debug\net8.0-windows\SignedDocuments\erecete-20251121232923566.xml
+2025-11-21 23:29:24.228 +03:00 [INF] Force fresh login: Yeni session açıldı ve login yapıldı (slot 0)
+2025-11-21 23:29:25.548 +03:00 [INF] İmzalı XML kaydedildi: C:\Users\umut3\Desktop\yenii\pkcs11interoplu\esigner-ilter\bin\Debug\net8.0-windows\SignedDocuments\erecete-20251121232923566.xsig
+2025-11-21 23:29:25.551 +03:00 [INF] İmzalama başarılı: XML uzunluğu 5113, ForceFreshLogin=true, Dosya Yolu: C:\Users\umut3\Desktop\yenii\pkcs11interoplu\esigner-ilter\bin\Debug\net8.0-windows\SignedDocuments\erecete-20251121232923566.xsig
+2025-11-21 23:29:25.553 +03:00 [INF] Setting HTTP status code 200.
+2025-11-21 23:29:25.555 +03:00 [INF] Writing value of type 'SignXmlResponse' as Json.
+2025-11-21 23:29:25.559 +03:00 [INF] Executed endpoint 'HTTP: POST /sign-xml'
+2025-11-21 23:29:25.561 +03:00 [INF] İstek tamamlandı: POST /sign-xml from ::1 in 2025ms (Status: 200)
+2025-11-21 23:29:25.562 +03:00 [INF] Request finished HTTP/1.1 POST http://localhost:5000/sign-xml - 200 null application/json; charset=utf-8 2029.3447ms

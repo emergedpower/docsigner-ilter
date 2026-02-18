@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8" standalone="yes"?>
+<ereceteBilgisi>
+ <doktorBransKodu>9999</doktorBransKodu>
+ <doktorTcKimlikNo>15652100404</doktorTcKimlikNo>
+ <doktorSertifikaKodu>0</doktorSertifikaKodu>
+ <ereceteIlacBilgisi>
+  <adet>1</adet>
+  <barkod>8699832090055</barkod>
+  <kullanimDoz1>2</kullanimDoz1>
+  <kullanimDoz2>1.0</kullanimDoz2>
+  <kullanimPeriyot>1</kullanimPeriyot>
+  <kullanimPeriyotBirimi>3</kullanimPeriyotBirimi>
+  <kullanimSekli>1</kullanimSekli>
+ </ereceteIlacBilgisi>
+ <ereceteNo>0</ereceteNo>
+ <ereceteTaniBilgisi>
+  <taniKodu>M79.19</taniKodu>
+ </ereceteTaniBilgisi>
+ <protokolNo>20251226130238a8cfd3</protokolNo>
+ <provizyonTipi>1</provizyonTipi>
+ <receteAltTuru>1</receteAltTuru>
+ <receteTarihi>26.12.2025</receteTarihi>
+ <receteTuru>1</receteTuru>
+ <seriNo>1</seriNo>
+ <takipNo>0</takipNo>
+ <tcKimlikNo>16852412380</tcKimlikNo>
+ <tesisKodu>11349903</tesisKodu>
+</ereceteBilgisi>

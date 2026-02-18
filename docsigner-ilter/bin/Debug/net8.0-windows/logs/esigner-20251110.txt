@@ -1,0 +1,20 @@
+2025-11-10 18:55:57.705 +03:00 [INF] E-İmza Ajan App Başlatıldı! (http://localhost:5000)
+2025-11-10 18:55:57.749 +03:00 [INF] Endpoints: /health, /devices, /get-subject, /sign-xml (POST). Bekleniyor...
+2025-11-10 18:55:57.851 +03:00 [INF] Lisans yükleniyor: Free | Path: C:\Users\umut3\Desktop\yenii\esigner-ilter\esigner-ilter\bin\Debug\net8.0-windows\Certificates\lisans.xml
+2025-11-10 18:55:57.938 +03:00 [INF] Lisans başarıyla yüklendi: Free
+2025-11-10 18:55:57.940 +03:00 [INF] Lisans başarıyla yüklendi.
+2025-11-10 18:55:58.047 +03:00 [WRN] Overriding address(es) 'http://localhost:5000'. Binding to endpoints defined via IConfiguration and/or UseKestrel() instead.
+2025-11-10 18:55:58.101 +03:00 [INF] Now listening on: http://localhost:5000
+2025-11-10 18:55:58.104 +03:00 [INF] Application started. Press Ctrl+C to shut down.
+2025-11-10 18:55:58.106 +03:00 [INF] Hosting environment: Development
+2025-11-10 18:55:58.107 +03:00 [INF] Content root path: C:\Users\umut3\Desktop\yenii\esigner-ilter\esigner-ilter\bin\Debug\net8.0-windows
+2025-11-10 18:56:14.644 +03:00 [INF] E-İmza Ajan App Başlatıldı! (http://localhost:5000)
+2025-11-10 18:56:14.678 +03:00 [INF] Endpoints: /health, /devices, /get-subject, /sign-xml (POST). Bekleniyor...
+2025-11-10 18:56:14.693 +03:00 [INF] Lisans yükleniyor: Free | Path: C:\Users\umut3\Desktop\yenii\esigner-ilter\esigner-ilter\bin\Debug\net8.0-windows\Certificates\lisans.xml
+2025-11-10 18:56:14.870 +03:00 [INF] Lisans başarıyla yüklendi: Free
+2025-11-10 18:56:14.871 +03:00 [INF] Lisans başarıyla yüklendi.
+2025-11-10 18:56:14.996 +03:00 [WRN] Overriding address(es) 'http://localhost:5000'. Binding to endpoints defined via IConfiguration and/or UseKestrel() instead.
+2025-11-10 18:56:15.042 +03:00 [INF] Now listening on: http://localhost:5000
+2025-11-10 18:56:15.044 +03:00 [INF] Application started. Press Ctrl+C to shut down.
+2025-11-10 18:56:15.045 +03:00 [INF] Hosting environment: Development
+2025-11-10 18:56:15.046 +03:00 [INF] Content root path: C:\Users\umut3\Desktop\yenii\esigner-ilter\esigner-ilter\bin\Debug\net8.0-windows

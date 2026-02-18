@@ -1,0 +1,84 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <OutputType Condition="'$(Configuration)' == 'Debug'">Exe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <RootNamespace>docsigner_ilter</RootNamespace>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <UseWindowsForms>true</UseWindowsForms>
+    <ApplicationIcon>logos\favicon.ico</ApplicationIcon>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Update="appsettings.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+
+  <ItemGroup>
+    <Reference Include="asn1rtcs">
+      <HintPath>lib\AnyCPU\asn1rtcs.dll</HintPath>
+    </Reference>
+    <Reference Include="log4net">
+      <HintPath>lib\AnyCPU\log4net.dll</HintPath>
+    </Reference>
+    <Reference Include="ma3api-asn">
+      <HintPath>lib\AnyCPU\ma3api-asn.dll</HintPath>
+    </Reference>
+    <Reference Include="ma3api-certstore">
+      <HintPath>lib\AnyCPU\ma3api-certstore.dll</HintPath>
+    </Reference>
+    <Reference Include="ma3api-certvalidation">
+      <HintPath>lib\AnyCPU\ma3api-certvalidation.dll</HintPath>
+    </Reference>
+    <Reference Include="ma3api-cmssignature">
+      <HintPath>lib\AnyCPU\ma3api-cmssignature.dll</HintPath>
+    </Reference>
+    <Reference Include="ma3api-common">
+      <HintPath>lib\AnyCPU\ma3api-common.dll</HintPath>
+    </Reference>
+    <Reference Include="ma3api-crypto">
+      <HintPath>lib\AnyCPU\ma3api-crypto.dll</HintPath>
+    </Reference>
+    <Reference Include="ma3api-crypto-bouncyprovider">
+      <HintPath>lib\AnyCPU\ma3api-crypto-bouncyprovider.dll</HintPath>
+    </Reference>
+    <Reference Include="ma3api-infra">
+      <HintPath>lib\AnyCPU\ma3api-infra.dll</HintPath>
+    </Reference>
+    <Reference Include="ma3api-pkcs11-interop">
+      <HintPath>lib\AnyCPU\ma3api-pkcs11-interop.dll</HintPath>
+    </Reference>
+    <Reference Include="ma3api-signature">
+      <HintPath>lib\AnyCPU\ma3api-signature.dll</HintPath>
+    </Reference>
+    <Reference Include="ma3api-smartcard">
+      <HintPath>lib\AnyCPU\ma3api-smartcard.dll</HintPath>
+    </Reference>
+    <Reference Include="ma3api-xmlsignature">
+      <HintPath>lib\AnyCPU\ma3api-xmlsignature.dll</HintPath>
+    </Reference>
+    <Reference Include="nunit.framework">
+      <HintPath>lib\AnyCPU\nunit.framework.dll</HintPath>
+    </Reference>
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="itext.bouncy-castle-adapter" Version="8.0.5" />
+    <PackageReference Include="itext7" Version="8.0.5" />
+    <PackageReference Include="Microsoft.Extensions.Hosting" Version="9.0.10" />
+    <PackageReference Include="Microsoft.Extensions.Logging" Version="9.0.10" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Console" Version="9.0.10" />
+    <PackageReference Include="Serilog.AspNetCore" Version="8.0.1" />
+    <PackageReference Include="Serilog.Extensions.Hosting" Version="9.0.0" />
+    <PackageReference Include="Serilog.Sinks.Console" Version="5.0.1" />
+    <PackageReference Include="Serilog.Sinks.File" Version="6.0.0" />
+    <PackageReference Include="System.Configuration.ConfigurationManager" Version="9.0.10" />
+  </ItemGroup>
+</Project>
+

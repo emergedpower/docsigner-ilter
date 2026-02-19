@@ -5,6 +5,7 @@ using System.Drawing;
 using System.Drawing.Drawing2D;
 using System.IO;
 using System.Linq;
+using System.Reflection;
 using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks; // 🔑 Delay için (popup ikon fix)
@@ -30,6 +31,7 @@ namespace docsigner_ilter
         private Panel signerCard = null!;
         private Label labelSignerTitle = null!;
         private Label labelSignerHint = null!;
+        private Label labelTrustState = null!;
         private Label labelPdfPath = null!;
         private TextBox txtPdfPath = null!;
         private Button btnSelectPdf = null!;
@@ -58,6 +60,9 @@ namespace docsigner_ilter
         private RichTextBox txtPreview = null!;
         private WebView2? webPreviewPdf;
         private bool isWebView2Unavailable;
+        private bool _webPreviewSuspendedByDeactivate;
+        private bool _webPreviewSuspendedByResize;
+        private bool _isWindowResizing;
         private string? signedDocsDir;
         private const int MaxPreviewChars = 15000;
         private const int PreferredSplitDistance = 360;
@@ -69,6 +74,9 @@ namespace docsigner_ilter
         // Device info for dynamic greeting
         private string deviceSubject = string.Empty;
         private readonly List<ReceptServiceApp.SignatureDeviceDto> signerDevices = new();
+        private bool _isTrustReadyForSelectedDevice;
+        private string? _trustReadyDeviceKey;
+        private int _trustCheckVersion;
         public SimpleForm()
         {
             InitializeComponent();
@@ -87,9 +95,17 @@ namespace docsigner_ilter
             StartPosition = FormStartPosition.CenterScreen;
             FormBorderStyle = FormBorderStyle.Sizable;
             MaximizeBox = true;
+            SizeGripStyle = SizeGripStyle.Hide;
+            ResizeRedraw = true;
             DoubleBuffered = true;
+            SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw, true);
+            UpdateStyles();
             BackColor = Color.FromArgb(242, 247, 252);
             Paint += (s, e) => DrawBackgroundGradient(e.Graphics);
+            Deactivate += (s, e) => SuspendWebPreviewOnDeactivate();
+            Activated += async (s, e) => await ResumeWebPreviewOnActivateAsync();
+            ResizeBegin += (s, e) => OnResizeBeginForSmoothRendering();
+            ResizeEnd += async (s, e) => await OnResizeEndForSmoothRenderingAsync();
             // FormClosing event for tray minimize on X
             FormClosing += (s, e) =>
             {
@@ -102,7 +118,7 @@ namespace docsigner_ilter
             // KART
             card = new Panel
             {
-                BackColor = Color.Transparent,
+                BackColor = Color.White,
                 Size = new Size(ClientSize.Width - 40, 220),
                 Location = new Point(20, 18),
                 Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right
@@ -230,18 +246,25 @@ namespace docsigner_ilter
                 LayoutSignerCard();
                 LayoutSignatureViewer();
                 ResizeSignedDocsColumns();
+                if (_isWindowResizing)
+                {
+                    card?.Invalidate();
+                    signerCard?.Invalidate();
+                    viewerCard?.Invalidate();
+                }
             };
 
             LayoutSignerCard();
             LayoutSignatureViewer();
             ResizeSignedDocsColumns();
+            EnableDoubleBufferingControlTree(this);
         }
 
         private void InitializePdfSignerUI()
         {
             signerCard = new Panel
             {
-                BackColor = Color.Transparent,
+                BackColor = Color.White,
                 Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right,
                 Height = 188
             };
@@ -336,6 +359,7 @@ namespace docsigner_ilter
                 Top = 148,
                 Width = 420
             };
+            cmbSignerDevice.SelectedIndexChanged += async (s, e) => await UpdateTrustButtonAvailabilityAsync();
             signerCard.Controls.Add(cmbSignerDevice);
 
             btnRefreshSignerDevices = new Button
@@ -369,8 +393,23 @@ namespace docsigner_ilter
                 Top = 34
             };
             btnSetupTrust.FlatAppearance.BorderSize = 0;
+            btnSetupTrust.Enabled = false;
             btnSetupTrust.Click += async (s, e) => await SetupSignerTrustAsync();
             signerCard.Controls.Add(btnSetupTrust);
+
+            labelTrustState = new Label
+            {
+                Text = string.Empty,
+                Font = new Font("Segoe UI", 8.5f, FontStyle.Bold),
+                ForeColor = Color.FromArgb(54, 108, 72),
+                BackColor = Color.White,
+                AutoSize = false,
+                Width = 340,
+                Height = 22,
+                Top = 12,
+                TextAlign = ContentAlignment.MiddleRight
+            };
+            signerCard.Controls.Add(labelTrustState);
 
             labelPin = new Label
             {
@@ -424,7 +463,10 @@ namespace docsigner_ilter
                 Font = new Font("Segoe UI", 8.5f),
                 ForeColor = Color.FromArgb(54, 71, 92),
                 AutoSize = true,
-                Top = 152
+                Top = 152,
+                Visible = false,
+                Checked = false,
+                Enabled = false
             };
             signerCard.Controls.Add(chkAddTimestamp);
 
@@ -479,7 +521,18 @@ namespace docsigner_ilter
             if (btnSetupTrust != null)
             {
                 btnSetupTrust.Left = signerCard.Width - btnSetupTrust.Width - 16;
-                labelSignerHint.Width = Math.Max(360, btnSetupTrust.Left - labelSignerHint.Left - 10);
+
+                int hintRightBoundary = btnSetupTrust.Left - 10;
+                if (labelTrustState != null)
+                {
+                    // Durum metni butonun tam üstünde dursun, sağ kenarlar birebir hizalansın.
+                    labelTrustState.Top = Math.Max(2, btnSetupTrust.Top - labelTrustState.Height - 2);
+                    labelTrustState.Left = btnSetupTrust.Right - labelTrustState.Width;
+                    labelTrustState.BringToFront();
+                    hintRightBoundary = Math.Min(hintRightBoundary, labelTrustState.Left - 10);
+                }
+
+                labelSignerHint.Width = Math.Max(360, hintRightBoundary - labelSignerHint.Left);
             }
             else
             {
@@ -494,11 +547,7 @@ namespace docsigner_ilter
             labelPage.Left = pageLeft;
             numPage.Left = pageLeft;
 
-            chkAddTimestamp.Left = numPage.Right + 10;
             btnSignPdf.Left = signerCard.Width - btnSignPdf.Width - 16;
-
-            if (chkAddTimestamp.Right > btnSignPdf.Left - 10)
-                chkAddTimestamp.Left = Math.Max(numPage.Right + 6, btnSignPdf.Left - chkAddTimestamp.Width - 10);
 
             labelSignerStatus.Top = labelPdfPath.Top;
             labelSignerStatus.Left = Math.Max(16, btnSelectPdf.Left - 360);
@@ -508,7 +557,7 @@ namespace docsigner_ilter
         {
             viewerCard = new Panel
             {
-                BackColor = Color.Transparent,
+                BackColor = Color.White,
                 Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right
             };
             viewerCard.Paint += Card_Paint;
@@ -522,14 +571,14 @@ namespace docsigner_ilter
                 Dock = DockStyle.Top,
                 Height = 36,
                 Padding = new Padding(16, 10, 0, 0),
-                BackColor = Color.Transparent
+                BackColor = Color.White
             };
 
             viewerToolbar = new Panel
             {
                 Dock = DockStyle.Top,
                 Height = 48,
-                BackColor = Color.Transparent
+                BackColor = Color.White
             };
 
             cmbFileFilter = new ComboBox
@@ -749,6 +798,93 @@ namespace docsigner_ilter
             }
         }
 
+        private void EnableDoubleBufferingControlTree(Control root)
+        {
+            TryEnableDoubleBuffering(root);
+            foreach (Control child in root.Controls)
+                EnableDoubleBufferingControlTree(child);
+        }
+
+        private static void TryEnableDoubleBuffering(Control control)
+        {
+            try
+            {
+                typeof(Control)
+                    .GetProperty("DoubleBuffered", BindingFlags.Instance | BindingFlags.NonPublic)?
+                    .SetValue(control, true, null);
+            }
+            catch
+            {
+                // Bazı özel kontrollerde reflection ile set edilemeyebilir.
+            }
+        }
+
+        private void SuspendWebPreviewOnDeactivate()
+        {
+            if (webPreviewPdf == null || !webPreviewPdf.Visible)
+                return;
+
+            _webPreviewSuspendedByDeactivate = true;
+            webPreviewPdf.Visible = false;
+            txtPreview.Visible = true;
+        }
+
+        private void OnResizeBeginForSmoothRendering()
+        {
+            _isWindowResizing = true;
+            SuspendWebPreviewOnResizeBegin();
+            Invalidate(true);
+        }
+
+        private void SuspendWebPreviewOnResizeBegin()
+        {
+            if (webPreviewPdf == null || !webPreviewPdf.Visible)
+                return;
+
+            _webPreviewSuspendedByResize = true;
+            webPreviewPdf.Visible = false;
+            txtPreview.Visible = true;
+        }
+
+        private async Task ResumeWebPreviewOnActivateAsync()
+        {
+            if (!_webPreviewSuspendedByDeactivate)
+                return;
+
+            _webPreviewSuspendedByDeactivate = false;
+            string? selectedPath = GetSelectedSignedFilePath();
+            if (string.IsNullOrWhiteSpace(selectedPath))
+                return;
+
+            if (!string.Equals(Path.GetExtension(selectedPath), ".pdf", StringComparison.OrdinalIgnoreCase))
+                return;
+
+            await TryShowPdfPreviewAsync(selectedPath);
+        }
+
+        private async Task OnResizeEndForSmoothRenderingAsync()
+        {
+            _isWindowResizing = false;
+            await ResumeWebPreviewOnResizeEndAsync();
+            Invalidate(true);
+        }
+
+        private async Task ResumeWebPreviewOnResizeEndAsync()
+        {
+            if (!_webPreviewSuspendedByResize)
+                return;
+
+            _webPreviewSuspendedByResize = false;
+            string? selectedPath = GetSelectedSignedFilePath();
+            if (string.IsNullOrWhiteSpace(selectedPath))
+                return;
+
+            if (!string.Equals(Path.GetExtension(selectedPath), ".pdf", StringComparison.OrdinalIgnoreCase))
+                return;
+
+            await TryShowPdfPreviewAsync(selectedPath);
+        }
+
         // 🔑 YENİ: Icon dispose (ObjectDisposedException fix, popup/tray ikonlarını koru)
         protected override void Dispose(bool disposing)
         {
@@ -782,19 +918,29 @@ namespace docsigner_ilter
                 return;
 
             var g = e.Graphics;
+            g.Clear(panel.BackColor);
             g.SmoothingMode = SmoothingMode.AntiAlias;
             var r = panel.ClientRectangle;
             if (r.Width <= 4 || r.Height <= 4)
                 return;
 
+            var drawRect = new Rectangle(r.X, r.Y, r.Width - 1, r.Height - 1);
             int radius = 16;
-            using var path = RoundedRect(r, radius);
-            using var bg = new SolidBrush(Color.White);
+            using var path = RoundedRect(drawRect, radius);
+            using var bg = new SolidBrush(panel.BackColor);
             using var pen = new Pen(Color.FromArgb(215, 225, 240), 1);
-            using var shadow = new SolidBrush(Color.FromArgb(30, 0, 0, 0));
-            var shadowRect = new Rectangle(r.X + 6, r.Y + 8, r.Width - 2, r.Height - 2);
-            using (var shadowPath = RoundedRect(shadowRect, radius + 2))
-                g.FillPath(shadow, shadowPath);
+
+            if (!_isWindowResizing && drawRect.Width > 14 && drawRect.Height > 14)
+            {
+                using var shadow = new SolidBrush(Color.FromArgb(26, 0, 0, 0));
+                var shadowRect = new Rectangle(drawRect.X + 2, drawRect.Y + 4, drawRect.Width - 6, drawRect.Height - 6);
+                if (shadowRect.Width > 4 && shadowRect.Height > 4)
+                {
+                    using var shadowPath = RoundedRect(shadowRect, radius + 1);
+                    g.FillPath(shadow, shadowPath);
+                }
+            }
+
             g.FillPath(bg, path);
             g.DrawPath(pen, path);
         }
@@ -971,7 +1117,7 @@ namespace docsigner_ilter
             {
                 PageNumber = pageNumber,
                 FileName = Path.GetFileName(filePath),
-                EnableTimestamp = chkAddTimestamp.Checked
+                EnableTimestamp = false
             };
 
             try
@@ -990,11 +1136,10 @@ namespace docsigner_ilter
                 txtPin.Clear();
                 LoadSignedDocuments(result.filePath);
 
-                string timestampText = result.timestampApplied ? "Timestamp eklendi." : "Timestamp eklenmedi.";
-                SetSignerStatus($"İmza tamamlandı: {Path.GetFileName(result.filePath)} | {timestampText}", false, true);
+                SetSignerStatus($"İmza tamamlandı: {Path.GetFileName(result.filePath)}", false, true);
 
                 if (MessageBox.Show(
-                        $"PDF başarıyla imzalandı.{Environment.NewLine}{Path.GetFileName(result.filePath)}{Environment.NewLine}{timestampText}{Environment.NewLine}{Environment.NewLine}Dosyayı açmak ister misiniz?",
+                        $"PDF başarıyla imzalandı.{Environment.NewLine}{Path.GetFileName(result.filePath)}{Environment.NewLine}{Environment.NewLine}Dosyayı açmak ister misiniz?",
                         "İmzalama Başarılı",
                         MessageBoxButtons.YesNo,
                         MessageBoxIcon.Information) == DialogResult.Yes)
@@ -1026,6 +1171,17 @@ namespace docsigner_ilter
             }
 
             var selectedDevice = signerDevices[cmbSignerDevice.SelectedIndex];
+            string selectedDeviceKey = $"{selectedDevice.Id}:{selectedDevice.Serial}:{selectedDevice.Subject}";
+            if (_isTrustReadyForSelectedDevice && string.Equals(_trustReadyDeviceKey, selectedDeviceKey, StringComparison.Ordinal))
+            {
+                MessageBox.Show(
+                    "Seçili cihaz için güven zinciri zaten hazır. Yeniden kurmaya gerek yok.",
+                    "Bilgi",
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Information);
+                return;
+            }
+
             var service = new ReceptServiceApp(new DummyLogger<ReceptServiceApp>());
 
             try
@@ -1033,7 +1189,7 @@ namespace docsigner_ilter
                 SetSignerBusy(true);
                 SetSignerStatus("Sertifika zinciri kuruluyor, lütfen bekleyin...", false, false);
 
-                var trustResult = await Task.Run(() => service.EnsureSignerTrust(selectedDevice.Id));
+                var trustResult = await Task.Run(() => service.EnsureSignerTrust(selectedDevice.Id, applyChanges: true));
 
                 if (!trustResult.Success)
                 {
@@ -1050,19 +1206,22 @@ namespace docsigner_ilter
                     ? $"{Environment.NewLine}Uyarılar: {string.Join(" | ", trustResult.Warnings.Take(2))}"
                     : string.Empty;
 
+                ApplyTrustReadinessState(selectedDevice, trustResult);
+
                 SetSignerStatus(
-                    $"Zincir: aday Root {trustResult.CandidateRootCount}, aday Ara {trustResult.CandidateIntermediateCount}, " +
-                    $"eklenen Root +{trustResult.AddedRootCount} (mevcut {trustResult.ExistingRootCount}), " +
-                    $"eklenen Ara +{trustResult.AddedIntermediateCount} (mevcut {trustResult.ExistingIntermediateCount}), " +
-                    $"Acrobat ayarı +{trustResult.AcrobatRegistryValuesWritten}, Doğrulama: {trustResult.ValidationStatus}",
-                    !trustResult.ValidationSucceeded,
-                    trustResult.ValidationSucceeded);
+                    $"Güven zinciri: {trustResult.ReadinessLevel} | CU: {(trustResult.CurrentUserChainReady ? "OK" : "Eksik")} | " +
+                    $"LM: {(trustResult.LocalMachineChainReady ? "OK" : "Eksik")} | Acrobat: {(trustResult.AcrobatWindowsStoreReady ? "OK" : "Eksik")} | " +
+                    $"Doğrulama: {trustResult.ValidationStatus}",
+                    string.Equals(trustResult.ReadinessLevel, "Hazır Değil", StringComparison.OrdinalIgnoreCase),
+                    string.Equals(trustResult.ReadinessLevel, "Hazır", StringComparison.OrdinalIgnoreCase));
 
                 MessageBox.Show(
                     $"{trustResult.Message}{warnings}{Environment.NewLine}{Environment.NewLine}Yeni bir PDF imzalayıp tekrar doğrulayın.",
                     "Güven Zinciri",
                     MessageBoxButtons.OK,
-                    trustResult.ValidationSucceeded ? MessageBoxIcon.Information : MessageBoxIcon.Warning);
+                    string.Equals(trustResult.ReadinessLevel, "Hazır", StringComparison.OrdinalIgnoreCase)
+                        ? MessageBoxIcon.Information
+                        : MessageBoxIcon.Warning);
             }
             catch (Exception ex)
             {
@@ -1075,16 +1234,126 @@ namespace docsigner_ilter
             }
         }
 
+        private async Task UpdateTrustButtonAvailabilityAsync()
+        {
+            if (cmbSignerDevice == null || cmbSignerDevice.SelectedIndex < 0 || cmbSignerDevice.SelectedIndex >= signerDevices.Count)
+            {
+                _isTrustReadyForSelectedDevice = false;
+                _trustReadyDeviceKey = null;
+                if (labelTrustState != null)
+                {
+                    labelTrustState.Text = "Durum: Cihaz seçildiğinde kontrol yapılır";
+                    labelTrustState.ForeColor = Color.FromArgb(128, 85, 0);
+                }
+                if (btnSetupTrust != null)
+                {
+                    btnSetupTrust.Enabled = false;
+                    btnSetupTrust.Cursor = Cursors.No;
+                }
+                return;
+            }
+
+            var selectedDevice = signerDevices[cmbSignerDevice.SelectedIndex];
+            int version = Interlocked.Increment(ref _trustCheckVersion);
+
+            if (labelTrustState != null)
+            {
+                labelTrustState.Text = "Durum: Güven zinciri kontrol ediliyor...";
+                labelTrustState.ForeColor = Color.FromArgb(128, 85, 0);
+            }
+
+            try
+            {
+                var service = new ReceptServiceApp(new DummyLogger<ReceptServiceApp>());
+                var trustResult = await Task.Run(() => service.EnsureSignerTrust(selectedDevice.Id, applyChanges: false));
+
+                if (version != _trustCheckVersion)
+                    return;
+
+                if (!trustResult.Success)
+                {
+                    _isTrustReadyForSelectedDevice = false;
+                    _trustReadyDeviceKey = null;
+                    if (labelTrustState != null)
+                    {
+                        labelTrustState.Text = "Durum: Zincir kontrolü yapılamadı";
+                        labelTrustState.ForeColor = Color.FromArgb(180, 36, 36);
+                    }
+                    if (btnSetupTrust != null)
+                    {
+                        btnSetupTrust.Enabled = true;
+                        btnSetupTrust.Cursor = Cursors.Hand;
+                    }
+                    return;
+                }
+
+                ApplyTrustReadinessState(selectedDevice, trustResult);
+            }
+            catch
+            {
+                if (version != _trustCheckVersion)
+                    return;
+
+                _isTrustReadyForSelectedDevice = false;
+                _trustReadyDeviceKey = null;
+                if (labelTrustState != null)
+                {
+                    labelTrustState.Text = "Durum: Zincir kontrolü yapılamadı";
+                    labelTrustState.ForeColor = Color.FromArgb(180, 36, 36);
+                }
+                if (btnSetupTrust != null)
+                {
+                    btnSetupTrust.Enabled = true;
+                    btnSetupTrust.Cursor = Cursors.Hand;
+                }
+            }
+        }
+
+        private void ApplyTrustReadinessState(
+            ReceptServiceApp.SignatureDeviceDto selectedDevice,
+            ReceptServiceApp.SignerTrustSetupResult trustResult)
+        {
+            string selectedDeviceKey = $"{selectedDevice.Id}:{selectedDevice.Serial}:{selectedDevice.Subject}";
+            bool ready = string.Equals(trustResult.ReadinessLevel, "Hazır", StringComparison.OrdinalIgnoreCase);
+
+            _isTrustReadyForSelectedDevice = ready;
+            _trustReadyDeviceKey = ready ? selectedDeviceKey : null;
+
+            if (labelTrustState != null)
+            {
+                if (ready)
+                {
+                    labelTrustState.Text = "Durum: Güven zinciri kuruldu.";
+                    labelTrustState.ForeColor = Color.FromArgb(10, 128, 80);
+                }
+                else if (string.Equals(trustResult.ReadinessLevel, "Kısmi", StringComparison.OrdinalIgnoreCase))
+                {
+                    labelTrustState.Text = "Durum: Zincir kısmi hazır (kur butonuna basın)";
+                    labelTrustState.ForeColor = Color.FromArgb(128, 85, 0);
+                }
+                else
+                {
+                    labelTrustState.Text = "Durum: Güven zinciri kurulmalı";
+                    labelTrustState.ForeColor = Color.FromArgb(180, 36, 36);
+                }
+            }
+
+            if (btnSetupTrust != null)
+            {
+                btnSetupTrust.Enabled = !ready;
+                btnSetupTrust.Cursor = ready ? Cursors.No : Cursors.Hand;
+            }
+        }
+
         private void SetSignerBusy(bool busy)
         {
             btnSignPdf.Enabled = !busy;
             btnSelectPdf.Enabled = !busy;
             btnRefreshSignerDevices.Enabled = !busy;
-            btnSetupTrust.Enabled = !busy;
+            btnSetupTrust.Enabled = !busy && !_isTrustReadyForSelectedDevice;
             cmbSignerDevice.Enabled = !busy;
             txtPin.Enabled = !busy;
             numPage.Enabled = !busy;
-            chkAddTimestamp.Enabled = !busy;
             UseWaitCursor = busy;
         }
 
@@ -1130,6 +1399,8 @@ namespace docsigner_ilter
             {
                 cmbSignerDevice.EndUpdate();
             }
+
+            _ = UpdateTrustButtonAvailabilityAsync();
         }
 
         // LOGO klasörü yolu

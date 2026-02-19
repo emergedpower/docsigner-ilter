@@ -193,6 +193,10 @@ namespace docsigner_ilter.Services
             public int ExistingRootCount { get; set; }
             public int ExistingIntermediateCount { get; set; }
             public int AcrobatRegistryValuesWritten { get; set; }
+            public bool CurrentUserChainReady { get; set; }
+            public bool LocalMachineChainReady { get; set; }
+            public bool AcrobatWindowsStoreReady { get; set; }
+            public string ReadinessLevel { get; set; } = string.Empty;
             public List<string> Warnings { get; set; } = new List<string>();
         }
 
@@ -310,7 +314,7 @@ namespace docsigner_ilter.Services
             return now > nb && now < na;
         }
 
-        public SignerTrustSetupResult EnsureSignerTrust(int? slotIndex)
+        public SignerTrustSetupResult EnsureSignerTrust(int? slotIndex, bool applyChanges = true)
         {
             var result = new SignerTrustSetupResult();
 
@@ -350,8 +354,31 @@ namespace docsigner_ilter.Services
                 {
                     result.Warnings.Add("İmzalayan sertifikası dışında zincir adayı bulunamadı (AIA/store erişimini kontrol edin).");
                 }
-                InstallChainCertificatesToStores(chainCandidates, signerCert, result, tryLocalMachine: true);
-                EnsureAcrobatWindowsStoreIntegration(result);
+                if (applyChanges)
+                {
+                    InstallChainCertificatesToStores(chainCandidates, signerCert, result, tryLocalMachine: true);
+                    EnsureAcrobatWindowsStoreIntegration(result);
+                }
+                else
+                {
+                    CountChainCertificatesInStoreLocation(
+                        chainCandidates,
+                        signerCert,
+                        StoreLocation.CurrentUser,
+                        out int existingRoot,
+                        out int existingIntermediate);
+                    result.ExistingRootCount = existingRoot;
+                    result.ExistingIntermediateCount = existingIntermediate;
+                }
+                result.CurrentUserChainReady = AreChainCertificatesPresentInStoreLocation(
+                    chainCandidates,
+                    signerCert,
+                    StoreLocation.CurrentUser);
+                result.LocalMachineChainReady = AreChainCertificatesPresentInStoreLocation(
+                    chainCandidates,
+                    signerCert,
+                    StoreLocation.LocalMachine);
+                result.AcrobatWindowsStoreReady = IsAcrobatWindowsStoreIntegrationReady(result);
 
                 using var validationChain = new X509Chain();
                 validationChain.ChainPolicy.RevocationMode = X509RevocationMode.Online;
@@ -365,6 +392,7 @@ namespace docsigner_ilter.Services
                 result.ValidationStatus = validationChain.ChainStatus == null || validationChain.ChainStatus.Length == 0
                     ? "OK"
                     : string.Join(", ", validationChain.ChainStatus.Select(x => x.Status.ToString()).Distinct());
+                result.ReadinessLevel = EvaluateTrustReadiness(result);
 
                 result.Success = true;
                 result.Message =
@@ -372,11 +400,14 @@ namespace docsigner_ilter.Services
                     $"Root eklendi: {result.AddedRootCount} (mevcut: {result.ExistingRootCount}), " +
                     $"Ara eklendi: {result.AddedIntermediateCount} (mevcut: {result.ExistingIntermediateCount}). " +
                     $"Doğrulama: {(result.ValidationSucceeded ? "Başarılı" : "Başarısız")} ({result.ValidationStatus}). " +
-                    $"Acrobat ayar yazımı: {result.AcrobatRegistryValuesWritten}";
+                    $"Acrobat ayar yazımı: {result.AcrobatRegistryValuesWritten}. " +
+                    $"Hazırlık: {result.ReadinessLevel} (CU Zincir={(result.CurrentUserChainReady ? "OK" : "Eksik")}, " +
+                    $"LM Zincir={(result.LocalMachineChainReady ? "OK" : "Eksik")}, " +
+                    $"Acrobat Windows Store={(result.AcrobatWindowsStoreReady ? "OK" : "Eksik")}).";
 
                 _logger.LogInformation(
-                    "Trust setup tamamlandı. Slot={Slot}, Subject={Subject}, CandidateRoot={CandidateRoot}, CandidateInt={CandidateInt}, RootAdded={RootAdded}, IntAdded={IntAdded}, Validation={Validation}",
-                    slotIdx, result.SignerSubject, result.CandidateRootCount, result.CandidateIntermediateCount, result.AddedRootCount, result.AddedIntermediateCount, result.ValidationStatus);
+                    "Trust setup tamamlandı. Slot={Slot}, Subject={Subject}, CandidateRoot={CandidateRoot}, CandidateInt={CandidateInt}, RootAdded={RootAdded}, IntAdded={IntAdded}, Validation={Validation}, Readiness={Readiness}, CUReady={CUReady}, LMReady={LMReady}, AcrobatReady={AcrobatReady}",
+                    slotIdx, result.SignerSubject, result.CandidateRootCount, result.CandidateIntermediateCount, result.AddedRootCount, result.AddedIntermediateCount, result.ValidationStatus, result.ReadinessLevel, result.CurrentUserChainReady, result.LocalMachineChainReady, result.AcrobatWindowsStoreReady);
             }
             catch (Exception ex)
             {
@@ -419,202 +450,237 @@ namespace docsigner_ilter.Services
 
             try
             {
-                ISession session;
-
                 await _pkcs11GlobalLock.WaitAsync().ConfigureAwait(false);
                 try
                 {
                     var lib = GetOrLoadLibrary();
-                    var slots = lib.GetSlotList(SlotsType.WithTokenPresent);
+                    int retryCount = 0;
+                    const int maxRetries = 2;
 
-                    if (slots == null || slots.Count == 0)
-                        throw new Exception("Kart bulunamadı");
-                    if (slotIdx < 0 || slotIdx >= slots.Count)
-                        throw new Exception("Kart bulunamadı");
-
-                    if (forceFreshLogin)
-                    {
-                        if (_sessionCache.TryRemove(slotIdx, out var oldSession))
-                        {
-                            try { oldSession.Logout(); } catch { }
-                            try { oldSession.Dispose(); } catch { }
-                        }
-
-                        session = slots[slotIdx].OpenSession(SessionType.ReadWrite);
-                        LoginWithPolicy(session, pin, forceFreshLogin: true, slotIdx: slotIdx);
-                        _sessionCache.TryAdd(slotIdx, session);
-                    }
-                    else if (_sessionCache.TryGetValue(slotIdx, out session))
-                    {
-                        _logger.LogInformation("PDF imza için cache session kullanılıyor (slot {Slot}).", slotIdx);
-                    }
-                    else
-                    {
-                        session = slots[slotIdx].OpenSession(SessionType.ReadWrite);
-                        LoginWithPolicy(session, pin, forceFreshLogin: false, slotIdx: slotIdx);
-                        _sessionCache.TryAdd(slotIdx, session);
-                    }
-
-                    var signingMaterial = GetSigningMaterial(session);
-                    var cert = signingMaterial.certificate;
-                    var key = signingMaterial.privateKey;
-                    var placement = ResolveSignaturePlacement(pdfContent, options);
-                    var signerName = ResolveSignerName(cert, options.SignerDisplayName);
-                    var fieldName = BuildFieldName(options.SignatureFieldName);
-                    var chain = BuildCertificateChain(cert, signingMaterial.certificates);
-                    bool shouldUseTimestamp = options.EnableTimestamp && !string.IsNullOrWhiteSpace(options.TsaUrl);
-
-                    if (options.AutoSetupTrustChain)
+                    while (retryCount <= maxRetries)
                     {
                         try
                         {
-                            var trustWarmup = new SignerTrustSetupResult();
-                            var trustCandidates = BuildTrustChainCandidates(cert, trustWarmup, signingMaterial.certificates);
-                            InstallChainCertificatesToStores(
-                                trustCandidates,
+                            var slots = lib.GetSlotList(SlotsType.WithTokenPresent);
+                            if (slots == null || slots.Count == 0)
+                                throw new Exception("Kart bulunamadı");
+                            if (slotIdx < 0 || slotIdx >= slots.Count)
+                                throw new Exception("Kart bulunamadı");
+
+                            bool attemptForceFreshLogin = forceFreshLogin || retryCount > 0;
+                            var session = GetOrCreateSigningSession(
+                                slots,
+                                slotIdx,
+                                pin,
+                                forceFreshLogin: attemptForceFreshLogin,
+                                forPdfSigning: true);
+
+                            var signingMaterial = GetSigningMaterial(session);
+                            var cert = signingMaterial.certificate;
+                            var key = signingMaterial.privateKey;
+                            var placement = ResolveSignaturePlacement(pdfContent, options);
+                            var signerName = ResolveSignerName(cert, options.SignerDisplayName);
+                            var fieldName = BuildFieldName(options.SignatureFieldName);
+                            var chainWithSource = BuildCertificateChainWithSource(cert, signingMaterial.certificates);
+                            var chain = chainWithSource.chain;
+                            var chainSourceCertificates = chainWithSource.sourceCertificates;
+                            LogChainEmbeddingDiagnostics(cert, signingMaterial.certificates, chainSourceCertificates);
+                            bool shouldUseTimestamp = options.EnableTimestamp && !string.IsNullOrWhiteSpace(options.TsaUrl);
+
+                            if (options.AutoSetupTrustChain)
+                            {
+                                try
+                                {
+                                    var trustWarmup = new SignerTrustSetupResult();
+                                    var trustCandidates = BuildTrustChainCandidates(cert, trustWarmup, signingMaterial.certificates);
+                                    InstallChainCertificatesToStores(
+                                        trustCandidates,
+                                        cert,
+                                        trustWarmup,
+                                        options.TryInstallTrustToLocalMachine);
+                                    if (options.ConfigureAcrobatWindowsStoreIntegration)
+                                        EnsureAcrobatWindowsStoreIntegration(trustWarmup);
+
+                                    _logger.LogInformation(
+                                        "PDF imza öncesi trust warm-up tamamlandı. AddedRoot={Root}, AddedInt={Int}, Validation={Validation}, AcrobatReg={AcrobatReg}",
+                                        trustWarmup.AddedRootCount,
+                                        trustWarmup.AddedIntermediateCount,
+                                        trustWarmup.ValidationStatus,
+                                        trustWarmup.AcrobatRegistryValuesWritten);
+                                }
+                                catch (Exception trustEx)
+                                {
+                                    _logger.LogWarning(trustEx, "PDF imza öncesi trust warm-up sırasında hata oluştu, imzalama devam edecek.");
+                                }
+                            }
+
+                            var signatureAppearance = BuildSignatureAppearance(
+                                fieldName,
+                                signerName,
                                 cert,
-                                trustWarmup,
-                                options.TryInstallTrustToLocalMachine);
-                            if (options.ConfigureAcrobatWindowsStoreIntegration)
-                                EnsureAcrobatWindowsStoreIntegration(trustWarmup);
+                                shouldUseTimestamp);
+
+                            var signerProperties = new SignerProperties()
+                                .SetFieldName(fieldName)
+                                .SetPageNumber(placement.PageNumber)
+                                .SetPageRect(placement.Rect)
+                                .SetSignDate(DateTime.Now)
+                                .SetSignatureCreator("docsigner-ILTER")
+                                .SetReason(string.IsNullOrWhiteSpace(options.Reason) ? "Elektronik imza" : options.Reason)
+                                .SetLocation(string.IsNullOrWhiteSpace(options.Location) ? "Türkiye" : options.Location)
+                                .SetSignatureAppearance(signatureAppearance);
+
+                            var externalSignature = new Pkcs11ExternalSignature(session, key);
+
+                            var twoPhaseSigner = new PadesTwoPhaseSigningHelper()
+                                .SetEstimatedSize(24000)
+                                .SetStampingProperties(new StampingProperties().UseAppendMode());
+
+                            bool timestampApplied = false;
+                            bool tryLtProfile = false;
+                            if (shouldUseTimestamp)
+                            {
+                                var tsa = new TSAClientBouncyCastle(
+                                    options.TsaUrl,
+                                    options.TsaUsername,
+                                    options.TsaPassword,
+                                    8192,
+                                    "SHA-256");
+
+                                twoPhaseSigner.SetTSAClient(tsa);
+                                twoPhaseSigner.SetOcspClient(new OcspClientBouncyCastle());
+                                twoPhaseSigner.SetCrlClient(new CrlClientOnline());
+                                twoPhaseSigner.SetTrustedCertificates(chain.ToList());
+                                timestampApplied = true;
+                                tryLtProfile = true;
+                            }
+
+                            byte[] preparedPdfBytes;
+                            var cmsContainer = default(iText.Signatures.Cms.CMSContainer)!;
+
+                            using (var prepareInputReader = new PdfReader(new MemoryStream(pdfContent)))
+                            using (var preparedOutputStream = new MemoryStream())
+                            {
+                                cmsContainer = twoPhaseSigner.CreateCMSContainerWithoutSignature(
+                                    chain,
+                                    "SHA-256",
+                                    prepareInputReader,
+                                    preparedOutputStream,
+                                    signerProperties);
+
+                                preparedPdfBytes = preparedOutputStream.ToArray();
+                            }
+
+                            byte[] signedPdfBytes;
+                            string profileUsed;
+                            if (timestampApplied && tryLtProfile)
+                            {
+                                try
+                                {
+                                    using var ltReader = new PdfReader(new MemoryStream(preparedPdfBytes));
+                                    using var ltOutputStream = new MemoryStream();
+                                    twoPhaseSigner.SignCMSContainerWithBaselineLTProfile(
+                                        externalSignature,
+                                        ltReader,
+                                        ltOutputStream,
+                                        fieldName,
+                                        cmsContainer);
+                                    signedPdfBytes = ltOutputStream.ToArray();
+                                    profileUsed = "LT";
+                                }
+                                catch (Exception ltEx)
+                                {
+                                    _logger.LogWarning(ltEx, "Baseline-LT imza başarısız oldu, Baseline-T profiline düşülüyor.");
+                                    using var tReader = new PdfReader(new MemoryStream(preparedPdfBytes));
+                                    using var tOutputStream = new MemoryStream();
+                                    twoPhaseSigner.SignCMSContainerWithBaselineTProfile(
+                                        externalSignature,
+                                        tReader,
+                                        tOutputStream,
+                                        fieldName,
+                                        cmsContainer);
+                                    signedPdfBytes = tOutputStream.ToArray();
+                                    profileUsed = "T";
+                                }
+                            }
+                            else if (timestampApplied)
+                            {
+                                using var tReader = new PdfReader(new MemoryStream(preparedPdfBytes));
+                                using var tOutputStream = new MemoryStream();
+                                twoPhaseSigner.SignCMSContainerWithBaselineTProfile(
+                                    externalSignature,
+                                    tReader,
+                                    tOutputStream,
+                                    fieldName,
+                                    cmsContainer);
+                                signedPdfBytes = tOutputStream.ToArray();
+                                profileUsed = "T";
+                            }
+                            else
+                            {
+                                using var bReader = new PdfReader(new MemoryStream(preparedPdfBytes));
+                                using var bOutputStream = new MemoryStream();
+                                twoPhaseSigner.SignCMSContainerWithBaselineBProfile(
+                                    externalSignature,
+                                    bReader,
+                                    bOutputStream,
+                                    fieldName,
+                                    cmsContainer);
+                                signedPdfBytes = bOutputStream.ToArray();
+                                profileUsed = "B";
+                            }
+
+                            string outputPath = Path.Combine(workDir, BuildSignedPdfFileName(options.FileName));
+                            File.WriteAllBytes(outputPath, signedPdfBytes);
+                            LogSignedPdfEmbeddingDiagnostics(signedPdfBytes, fieldName, chainSourceCertificates);
 
                             _logger.LogInformation(
-                                "PDF imza öncesi trust warm-up tamamlandı. AddedRoot={Root}, AddedInt={Int}, Validation={Validation}, AcrobatReg={AcrobatReg}",
-                                trustWarmup.AddedRootCount,
-                                trustWarmup.AddedIntermediateCount,
-                                trustWarmup.ValidationStatus,
-                                trustWarmup.AcrobatRegistryValuesWritten);
+                                "PDF imzalama başarılı. Dosya={Path}, Slot={Slot}, Signer={Signer}, Timestamp={Timestamp}, PAdESProfile={Profile}, EmbedChainTotal={ChainTotal}",
+                                outputPath, slotIdx, signerName, timestampApplied, profileUsed, chainSourceCertificates.Count);
+
+                            return (signedPdfBytes, outputPath, signerName, timestampApplied);
                         }
-                        catch (Exception trustEx)
+                        catch (Pkcs11Exception p11Ex) when (IsSessionHandleInvalid(p11Ex))
                         {
-                            _logger.LogWarning(trustEx, "PDF imza öncesi trust warm-up sırasında hata oluştu, imzalama devam edecek.");
+                            retryCount++;
+                            if (retryCount > maxRetries)
+                            {
+                                _logger.LogError(p11Ex, "PDF imza sırasında session invalid hatası tekrarladı (slot {Slot}).", slotIdx);
+                                throw new Exception("Session handle geçersiz (PDF). Lütfen kartı çıkarıp takın, cihazları yenileyin ve tekrar deneyin.", p11Ex);
+                            }
+
+                            _logger.LogWarning(
+                                p11Ex,
+                                "PDF imza sırasında session invalid. Retry {Retry}/{Max} (slot {Slot})",
+                                retryCount,
+                                maxRetries,
+                                slotIdx);
+
+                            RemoveCachedSession(slotIdx);
+                            await Task.Delay(600 * retryCount).ConfigureAwait(false);
                         }
-                    }
-
-                    var signatureAppearance = BuildSignatureAppearance(
-                        fieldName,
-                        signerName,
-                        cert,
-                        shouldUseTimestamp);
-
-                    var signerProperties = new SignerProperties()
-                        .SetFieldName(fieldName)
-                        .SetPageNumber(placement.PageNumber)
-                        .SetPageRect(placement.Rect)
-                        .SetSignDate(DateTime.Now)
-                        .SetSignatureCreator("docsigner-ILTER")
-                        .SetReason(string.IsNullOrWhiteSpace(options.Reason) ? "Elektronik imza" : options.Reason)
-                        .SetLocation(string.IsNullOrWhiteSpace(options.Location) ? "Türkiye" : options.Location)
-                        .SetSignatureAppearance(signatureAppearance);
-
-                    var externalSignature = new Pkcs11ExternalSignature(session, key);
-
-                    var twoPhaseSigner = new PadesTwoPhaseSigningHelper()
-                        .SetEstimatedSize(24000)
-                        .SetStampingProperties(new StampingProperties().UseAppendMode());
-
-                    bool timestampApplied = false;
-                    bool tryLtProfile = false;
-                    if (shouldUseTimestamp)
-                    {
-                        var tsa = new TSAClientBouncyCastle(
-                            options.TsaUrl,
-                            options.TsaUsername,
-                            options.TsaPassword,
-                            8192,
-                            "SHA-256");
-
-                        twoPhaseSigner.SetTSAClient(tsa);
-                        twoPhaseSigner.SetOcspClient(new OcspClientBouncyCastle());
-                        twoPhaseSigner.SetCrlClient(new CrlClientOnline());
-                        twoPhaseSigner.SetTrustedCertificates(chain.ToList());
-                        timestampApplied = true;
-                        tryLtProfile = true;
-                    }
-
-                    byte[] preparedPdfBytes;
-                    var cmsContainer = default(iText.Signatures.Cms.CMSContainer)!;
-
-                    using (var prepareInputReader = new PdfReader(new MemoryStream(pdfContent)))
-                    using (var preparedOutputStream = new MemoryStream())
-                    {
-                        cmsContainer = twoPhaseSigner.CreateCMSContainerWithoutSignature(
-                            chain,
-                            "SHA-256",
-                            prepareInputReader,
-                            preparedOutputStream,
-                            signerProperties);
-
-                        preparedPdfBytes = preparedOutputStream.ToArray();
-                    }
-
-                    byte[] signedPdfBytes;
-                    string profileUsed;
-                    if (timestampApplied && tryLtProfile)
-                    {
-                        try
+                        catch (Exception ex) when (IsSessionHandleInvalidMessage(ex.Message))
                         {
-                            using var ltReader = new PdfReader(new MemoryStream(preparedPdfBytes));
-                            using var ltOutputStream = new MemoryStream();
-                            twoPhaseSigner.SignCMSContainerWithBaselineLTProfile(
-                                externalSignature,
-                                ltReader,
-                                ltOutputStream,
-                                fieldName,
-                                cmsContainer);
-                            signedPdfBytes = ltOutputStream.ToArray();
-                            profileUsed = "LT";
-                        }
-                        catch (Exception ltEx)
-                        {
-                            _logger.LogWarning(ltEx, "Baseline-LT imza başarısız oldu, Baseline-T profiline düşülüyor.");
-                            using var tReader = new PdfReader(new MemoryStream(preparedPdfBytes));
-                            using var tOutputStream = new MemoryStream();
-                            twoPhaseSigner.SignCMSContainerWithBaselineTProfile(
-                                externalSignature,
-                                tReader,
-                                tOutputStream,
-                                fieldName,
-                                cmsContainer);
-                            signedPdfBytes = tOutputStream.ToArray();
-                            profileUsed = "T";
+                            retryCount++;
+                            if (retryCount > maxRetries)
+                            {
+                                _logger.LogError(ex, "PDF imza sırasında session invalid mesajı tekrarladı (slot {Slot}).", slotIdx);
+                                throw;
+                            }
+
+                            _logger.LogWarning(
+                                ex,
+                                "PDF imza sırasında session invalid mesajı. Retry {Retry}/{Max} (slot {Slot})",
+                                retryCount,
+                                maxRetries,
+                                slotIdx);
+
+                            RemoveCachedSession(slotIdx);
+                            await Task.Delay(600 * retryCount).ConfigureAwait(false);
                         }
                     }
-                    else if (timestampApplied)
-                    {
-                        using var tReader = new PdfReader(new MemoryStream(preparedPdfBytes));
-                        using var tOutputStream = new MemoryStream();
-                        twoPhaseSigner.SignCMSContainerWithBaselineTProfile(
-                            externalSignature,
-                            tReader,
-                            tOutputStream,
-                            fieldName,
-                            cmsContainer);
-                        signedPdfBytes = tOutputStream.ToArray();
-                        profileUsed = "T";
-                    }
-                    else
-                    {
-                        using var bReader = new PdfReader(new MemoryStream(preparedPdfBytes));
-                        using var bOutputStream = new MemoryStream();
-                        twoPhaseSigner.SignCMSContainerWithBaselineBProfile(
-                            externalSignature,
-                            bReader,
-                            bOutputStream,
-                            fieldName,
-                            cmsContainer);
-                        signedPdfBytes = bOutputStream.ToArray();
-                        profileUsed = "B";
-                    }
 
-                    string outputPath = Path.Combine(workDir, BuildSignedPdfFileName(options.FileName));
-                    File.WriteAllBytes(outputPath, signedPdfBytes);
-
-                    _logger.LogInformation(
-                        "PDF imzalama başarılı. Dosya={Path}, Slot={Slot}, Signer={Signer}, Timestamp={Timestamp}, PAdESProfile={Profile}",
-                        outputPath, slotIdx, signerName, timestampApplied, profileUsed);
-
-                    return (signedPdfBytes, outputPath, signerName, timestampApplied);
+                    throw new Exception("PDF imzalama sırasında beklenmeyen session hatası oluştu.");
                 }
                 catch (Pkcs11Exception p11Ex) when (p11Ex.RV == CKR.CKR_PIN_INCORRECT)
                 {
@@ -635,6 +701,60 @@ namespace docsigner_ilter.Services
             {
                 gate.Release();
             }
+        }
+
+        private static bool IsSessionHandleInvalid(Pkcs11Exception ex)
+        {
+            string message = ex.Message ?? string.Empty;
+            return ex.RV == CKR.CKR_SESSION_HANDLE_INVALID ||
+                   ex.RV == CKR.CKR_TOKEN_NOT_RECOGNIZED ||
+                   message.Contains("CKR_SESSION_HANDLE_INVALID", StringComparison.OrdinalIgnoreCase) ||
+                   message.Contains("session", StringComparison.OrdinalIgnoreCase) && message.Contains("invalid", StringComparison.OrdinalIgnoreCase) ||
+                   message.Contains("handle", StringComparison.OrdinalIgnoreCase) && message.Contains("invalid", StringComparison.OrdinalIgnoreCase) ||
+                   message.Contains("closed", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static bool IsSessionHandleInvalidMessage(string? message)
+        {
+            if (string.IsNullOrWhiteSpace(message))
+                return false;
+
+            return message.Contains("CKR_SESSION_HANDLE_INVALID", StringComparison.OrdinalIgnoreCase) ||
+                   message.Contains("session handle", StringComparison.OrdinalIgnoreCase) ||
+                   message.Contains("session invalid", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private void RemoveCachedSession(int slotIdx)
+        {
+            if (_sessionCache.TryRemove(slotIdx, out var oldSession))
+            {
+                try { oldSession.Logout(); } catch { }
+                try { oldSession.Dispose(); } catch { }
+            }
+        }
+
+        private ISession GetOrCreateSigningSession(
+            IList<ISlot> slots,
+            int slotIdx,
+            string pin,
+            bool forceFreshLogin,
+            bool forPdfSigning)
+        {
+            if (forceFreshLogin)
+                RemoveCachedSession(slotIdx);
+
+            if (!forceFreshLogin && _sessionCache.TryGetValue(slotIdx, out var cachedSession))
+            {
+                if (forPdfSigning)
+                    _logger.LogInformation("PDF imza için cache session kullanılıyor (slot {Slot}).", slotIdx);
+
+                return cachedSession;
+            }
+
+            var session = slots[slotIdx].OpenSession(SessionType.ReadWrite);
+            LoginWithPolicy(session, pin, forceFreshLogin, slotIdx);
+            _sessionCache[slotIdx] = session;
+            return session;
         }
 
         public async Task<(string signedXml, string filePath, string signedFileContent)> SignRecept(
@@ -1128,6 +1248,43 @@ namespace docsigner_ilter.Services
             return true;
         }
 
+        private void CountChainCertificatesInStoreLocation(
+            List<X509Certificate2> chainCertificates,
+            X509Certificate2 signerCert,
+            StoreLocation location,
+            out int existingRootCount,
+            out int existingIntermediateCount)
+        {
+            existingRootCount = 0;
+            existingIntermediateCount = 0;
+
+            foreach (var cert in chainCertificates)
+            {
+                if (string.Equals(cert.Thumbprint, signerCert.Thumbprint, StringComparison.OrdinalIgnoreCase))
+                    continue;
+
+                bool isRoot = DistinguishedNameEquals(cert.Subject, cert.Issuer);
+                StoreName storeName = isRoot ? StoreName.Root : StoreName.CertificateAuthority;
+
+                try
+                {
+                    using var store = new X509Store(storeName, location);
+                    store.Open(OpenFlags.ReadOnly | OpenFlags.OpenExistingOnly);
+                    bool exists = !string.IsNullOrWhiteSpace(cert.Thumbprint) &&
+                                  store.Certificates.Find(X509FindType.FindByThumbprint, cert.Thumbprint, false).Count > 0;
+                    if (!exists)
+                        continue;
+
+                    if (isRoot) existingRootCount++;
+                    else existingIntermediateCount++;
+                }
+                catch
+                {
+                    // erişilemeyen store sayımı atlanır
+                }
+            }
+        }
+
         private void InstallChainCertificatesToStoreLocation(
             List<X509Certificate2> chainCertificates,
             X509Certificate2 signerCert,
@@ -1252,6 +1409,65 @@ namespace docsigner_ilter.Services
                     result.Warnings.Add($"Acrobat registry ayarı yazılamadı ({productRoot}): {ex.Message}");
                 }
             }
+        }
+
+        private bool IsAcrobatWindowsStoreIntegrationReady(SignerTrustSetupResult? result = null)
+        {
+            string[] productRoots =
+            {
+                @"SOFTWARE\Adobe\Adobe Acrobat\DC\Security",
+                @"SOFTWARE\Adobe\Acrobat Reader\DC\Security"
+            };
+
+            const int windowsStoreTrustMask = 0x62;
+            const int importEnable = 1;
+            bool foundAnyProduct = false;
+            bool readyOnAnyProduct = false;
+
+            foreach (string productRoot in productRoots)
+            {
+                try
+                {
+                    using var securityKey = Registry.CurrentUser.OpenSubKey(productRoot, writable: false);
+                    if (securityKey == null)
+                        continue;
+
+                    foundAnyProduct = true;
+
+                    using var mscapiKey = securityKey.OpenSubKey(@"cASPKI\cMSCAPI_DirectoryProvider", writable: false);
+                    using var ppkKey = securityKey.OpenSubKey("PPKHandler", writable: false);
+
+                    if (mscapiKey == null || ppkKey == null)
+                        continue;
+
+                    bool windowsStoreOk = ReadDword(mscapiKey, "iMSStoreTrusted") == windowsStoreTrustMask;
+                    bool importOk = ReadDword(ppkKey, "bCertStoreImportEnable") == importEnable;
+                    if (windowsStoreOk && importOk)
+                        readyOnAnyProduct = true;
+                }
+                catch (Exception ex)
+                {
+                    result?.Warnings.Add($"Acrobat registry ayarı okunamadı ({productRoot}): {ex.Message}");
+                }
+            }
+
+            if (!foundAnyProduct)
+            {
+                result?.Warnings.Add("Acrobat/Reader registry anahtarı bulunamadı (yüklenmemiş olabilir).");
+            }
+
+            return readyOnAnyProduct;
+        }
+
+        private static string EvaluateTrustReadiness(SignerTrustSetupResult result)
+        {
+            if (result.ValidationSucceeded && result.CurrentUserChainReady && result.AcrobatWindowsStoreReady)
+                return "Hazır";
+
+            if (result.ValidationSucceeded || result.CurrentUserChainReady || result.AcrobatWindowsStoreReady)
+                return "Kısmi";
+
+            return "Hazır Değil";
         }
 
         // (Aşağısı senin mevcut CreateFinalMedulaXadesBes + canonicalize + DigestInfoSHA256 aynen)
@@ -1531,6 +1747,118 @@ namespace docsigner_ilter.Services
             return di;
         }
 
+        private void LogChainEmbeddingDiagnostics(
+            X509Certificate2 signerCert,
+            IReadOnlyCollection<X509Certificate2> tokenCertificates,
+            IReadOnlyCollection<X509Certificate2> embeddingChainCertificates)
+        {
+            try
+            {
+                var tokenThumbprints = new HashSet<string>(
+                    tokenCertificates
+                        .Select(x => x.Thumbprint)
+                        .Where(x => !string.IsNullOrWhiteSpace(x))!
+                        .Select(x => x!),
+                    StringComparer.OrdinalIgnoreCase);
+
+                int intermediateCount = 0;
+                int rootCount = 0;
+                int index = 0;
+
+                foreach (var cert in embeddingChainCertificates)
+                {
+                    bool isSigner = string.Equals(cert.Thumbprint, signerCert.Thumbprint, StringComparison.OrdinalIgnoreCase);
+                    bool isRoot = DistinguishedNameEquals(cert.Subject, cert.Issuer);
+                    bool fromToken = !string.IsNullOrWhiteSpace(cert.Thumbprint) && tokenThumbprints.Contains(cert.Thumbprint);
+
+                    string role = isSigner ? "EE" : isRoot ? "Root" : "Ara";
+                    if (!isSigner)
+                    {
+                        if (isRoot) rootCount++;
+                        else intermediateCount++;
+                    }
+
+                    _logger.LogInformation(
+                        "PDF zincir[{Index}] Role={Role}, TokenKaynak={TokenSource}, Subject={Subject}, Issuer={Issuer}, Thumbprint={Thumbprint}, NotAfter={NotAfter:yyyy-MM-dd}",
+                        index++,
+                        role,
+                        fromToken,
+                        cert.Subject,
+                        cert.Issuer,
+                        cert.Thumbprint,
+                        cert.NotAfter);
+                }
+
+                _logger.LogInformation(
+                    "PDF imza zinciri hazır. Toplam={Total}, EE=1, Ara={Intermediate}, Root={Root}, TokenSertifika={TokenCount}",
+                    embeddingChainCertificates.Count,
+                    intermediateCount,
+                    rootCount,
+                    tokenCertificates.Count);
+
+                if (intermediateCount == 0)
+                {
+                    _logger.LogWarning("PDF imza zincirinde ara sertifika bulunamadı. Acrobat kimlik doğrulaması sorunlu olabilir.");
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "PDF imza zinciri loglama sırasında hata oluştu.");
+            }
+        }
+
+        private void LogSignedPdfEmbeddingDiagnostics(
+            byte[] signedPdfBytes,
+            string preferredFieldName,
+            IReadOnlyCollection<X509Certificate2> expectedChainSourceCertificates)
+        {
+            try
+            {
+                using var reader = new PdfReader(new MemoryStream(signedPdfBytes));
+                using var pdfDoc = new PdfDocument(reader);
+                var signatureUtil = new SignatureUtil(pdfDoc);
+                var signatureNames = signatureUtil.GetSignatureNames();
+
+                if (signatureNames == null || signatureNames.Count == 0)
+                {
+                    _logger.LogWarning("İmzalı PDF içinde imza alanı bulunamadı. Gömülü zincir kontrolü yapılamadı.");
+                    return;
+                }
+
+                string selectedFieldName = preferredFieldName;
+                bool foundPreferred = signatureNames.Any(x => string.Equals(x, preferredFieldName, StringComparison.Ordinal));
+                if (!foundPreferred)
+                    selectedFieldName = signatureNames[signatureNames.Count - 1];
+
+                var pkcs7 = signatureUtil.ReadSignatureData(selectedFieldName);
+                var embeddedCertificates = pkcs7.GetCertificates();
+                int embeddedCount = embeddedCertificates?.Length ?? 0;
+                int expectedCount = expectedChainSourceCertificates.Count;
+
+                _logger.LogInformation(
+                    "PDF gömülü zincir kontrolü: Field={Field}, EmbeddedCertCount={Embedded}, ExpectedChainCount={Expected}",
+                    selectedFieldName,
+                    embeddedCount,
+                    expectedCount);
+
+                if (embeddedCount < 2)
+                {
+                    _logger.LogWarning("PDF içindeki CMS sertifika sayısı {Count}. Ara sertifika gömülmemiş olabilir.", embeddedCount);
+                }
+                else if (embeddedCount < expectedCount)
+                {
+                    _logger.LogWarning(
+                        "PDF içindeki CMS sertifika sayısı beklenenden düşük. Embedded={Embedded}, Expected={Expected}. Root dışarıda bırakılmış veya ara sertifika eksik olabilir.",
+                        embeddedCount,
+                        expectedCount);
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "İmzalı PDF gömülü zincir kontrolü başarısız.");
+            }
+        }
+
         private static SignaturePlacement ResolveSignaturePlacement(byte[] pdfContent, PdfSignatureOptions options)
         {
             using var input = new MemoryStream(pdfContent);
@@ -1564,7 +1892,23 @@ namespace docsigner_ilter.Services
             return new SignaturePlacement(pageNumber, new PdfRectangle(x, y, width, height));
         }
 
+        private static (IX509Certificate[] chain, List<X509Certificate2> sourceCertificates) BuildCertificateChainWithSource(
+            X509Certificate2 cert,
+            IReadOnlyCollection<X509Certificate2>? extraCertificates = null)
+        {
+            var sourceCertificates = BuildCertificateChainSourceCertificates(cert, extraCertificates);
+            var chainCertificates = ConvertToITextCertificateChain(sourceCertificates);
+            return (chainCertificates, sourceCertificates);
+        }
+
         private static IX509Certificate[] BuildCertificateChain(
+            X509Certificate2 cert,
+            IReadOnlyCollection<X509Certificate2>? extraCertificates = null)
+        {
+            return BuildCertificateChainWithSource(cert, extraCertificates).chain;
+        }
+
+        private static List<X509Certificate2> BuildCertificateChainSourceCertificates(
             X509Certificate2 cert,
             IReadOnlyCollection<X509Certificate2>? extraCertificates = null)
         {
@@ -1629,6 +1973,11 @@ namespace docsigner_ilter.Services
                     break;
             }
 
+            return sourceCertificates;
+        }
+
+        private static IX509Certificate[] ConvertToITextCertificateChain(IReadOnlyCollection<X509Certificate2> sourceCertificates)
+        {
             var factory = BouncyCastleFactoryCreator.GetFactory();
             var unique = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             var chainCertificates = new List<IX509Certificate>();

@@ -28,6 +28,7 @@ namespace docsigner_ilter
         private Button btnGizle = null!; // Tek buton
         private Button btnYenile = null!; // Yenile butonu
         private NotifyIcon trayIcon = null!;
+        private ContextMenuStrip trayMenu = null!;
         private Panel signerCard = null!;
         private Label labelSignerTitle = null!;
         private Label labelSignerHint = null!;
@@ -65,6 +66,7 @@ namespace docsigner_ilter
         private bool _isWindowResizing;
         private string? signedDocsDir;
         private const int MaxPreviewChars = 15000;
+        private const int MaxInlinePdfPreviewBytes = 1100000;
         private const int PreferredSplitDistance = 360;
         private const int DesiredSplitMinLeft = 300;
         private const int DesiredSplitMinRight = 280;
@@ -78,6 +80,7 @@ namespace docsigner_ilter
         private string? _trustReadyDeviceKey;
         private int _trustCheckVersion;
         private int _previewValidationVersion;
+        private bool _allowClose;
         public SimpleForm()
         {
             InitializeComponent();
@@ -102,7 +105,6 @@ namespace docsigner_ilter
             SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw, true);
             UpdateStyles();
             BackColor = Color.FromArgb(242, 247, 252);
-            Paint += (s, e) => DrawBackgroundGradient(e.Graphics);
             Deactivate += (s, e) => SuspendWebPreviewOnDeactivate();
             Activated += async (s, e) => await ResumeWebPreviewOnActivateAsync();
             ResizeBegin += (s, e) => OnResizeBeginForSmoothRendering();
@@ -110,6 +112,9 @@ namespace docsigner_ilter
             // FormClosing event for tray minimize on X
             FormClosing += (s, e) =>
             {
+                if (_allowClose)
+                    return;
+
                 if (e.CloseReason == CloseReason.UserClosing)
                 {
                     e.Cancel = true;
@@ -176,7 +181,7 @@ namespace docsigner_ilter
             // MERKEZ MESAJ
             labelMesaj = new Label
             {
-                Text = "PDF belgenizi seçip PAdES uyumlu elektronik imza atabilirsiniz.",
+                Text = "PDF belgenizi güvenle seçip imza atabilirsiniz.",
                 Font = new Font("Segoe UI", 10),
                 ForeColor = Color.FromArgb(44, 61, 80),
                 AutoSize = false,
@@ -194,7 +199,7 @@ namespace docsigner_ilter
                 ForeColor = Color.White,
                 FlatStyle = FlatStyle.Flat,
                 Size = new Size(120, 36),
-                Location = new Point((card.Width - 120 - 120 - 10) / 2, labelMesaj.Bottom + 14),
+                Location = new Point((card.Width - 120 - 120 - 10) / 2, labelMesaj.Bottom + 6),
                 Cursor = Cursors.Hand
             };
             btnYenile.FlatAppearance.BorderSize = 0;
@@ -213,7 +218,7 @@ namespace docsigner_ilter
                 ForeColor = Color.White,
                 FlatStyle = FlatStyle.Flat,
                 Size = new Size(120, 36),
-                Location = new Point(btnYenile.Right + 10, labelMesaj.Bottom + 14),
+                Location = new Point(btnYenile.Right + 10, labelMesaj.Bottom + 6),
                 Cursor = Cursors.Hand
             };
             btnGizle.FlatAppearance.BorderSize = 0;
@@ -226,6 +231,15 @@ namespace docsigner_ilter
                 Text = "docsigner-ILTER"
             };
             trayIcon.DoubleClick += (s, e) => RestoreFromTray();
+            trayMenu = new ContextMenuStrip();
+            var menuOpen = new ToolStripMenuItem("Aç");
+            menuOpen.Click += (s, e) => RestoreFromTray();
+            var menuExit = new ToolStripMenuItem("Çıkış");
+            menuExit.Click += (s, e) => ExitApplicationFromTray();
+            trayMenu.Items.Add(menuOpen);
+            trayMenu.Items.Add(new ToolStripSeparator());
+            trayMenu.Items.Add(menuExit);
+            trayIcon.ContextMenuStrip = trayMenu;
 
             InitializePdfSignerUI();
             InitializeSignatureViewerUI();
@@ -242,17 +256,15 @@ namespace docsigner_ilter
                 btnGizle.Left = btnYenile.Right + 10;
                 labelDeviceLine.Top = cardHeader.Bottom + 16;
                 labelMesaj.Top = labelDeviceLine.Bottom + 8;
-                btnYenile.Top = labelMesaj.Bottom + 14;
-                btnGizle.Top = labelMesaj.Bottom + 14;
+                btnYenile.Top = labelMesaj.Bottom + 6;
+                btnGizle.Top = labelMesaj.Bottom + 6;
                 LayoutSignerCard();
                 LayoutSignatureViewer();
                 ResizeSignedDocsColumns();
-                if (_isWindowResizing)
-                {
-                    card?.Invalidate();
-                    signerCard?.Invalidate();
-                    viewerCard?.Invalidate();
-                }
+                card?.Invalidate();
+                signerCard?.Invalidate();
+                viewerCard?.Invalidate();
+                Invalidate(true);
             };
 
             LayoutSignerCard();
@@ -360,7 +372,12 @@ namespace docsigner_ilter
                 Top = 148,
                 Width = 420
             };
-            cmbSignerDevice.SelectedIndexChanged += async (s, e) => await UpdateTrustButtonAvailabilityAsync();
+            cmbSignerDevice.SelectedIndexChanged += async (s, e) =>
+            {
+                UpdateHeaderFromSelectedDevice();
+                await UpdateTrustButtonAvailabilityAsync();
+            };
+            cmbSignerDevice.TextChanged += (s, e) => UpdateHeaderFromSelectedDevice();
             signerCard.Controls.Add(cmbSignerDevice);
 
             btnRefreshSignerDevices = new Button
@@ -896,8 +913,14 @@ namespace docsigner_ilter
                 pictureLogo?.Image?.Dispose(); // PictureBox image'ını da temizle
                 webPreviewPdf?.Dispose();
                 trayIcon?.Dispose();
+                trayMenu?.Dispose();
             }
             base.Dispose(disposing);
+        }
+
+        protected override void OnPaintBackground(PaintEventArgs e)
+        {
+            DrawBackgroundGradient(e.Graphics);
         }
         // Arka plan gradyanı
         private void DrawBackgroundGradient(Graphics g)
@@ -995,6 +1018,20 @@ namespace docsigner_ilter
             WindowState = FormWindowState.Normal;
             Activate();
             trayIcon.Visible = false;
+        }
+
+        private void ExitApplicationFromTray()
+        {
+            _allowClose = true;
+            trayIcon.Visible = false;
+            try
+            {
+                Close();
+            }
+            catch
+            {
+                Application.Exit();
+            }
         }
 
         private void SelectPdfDocument()
@@ -1401,6 +1438,7 @@ namespace docsigner_ilter
                 cmbSignerDevice.EndUpdate();
             }
 
+            UpdateHeaderFromSelectedDevice();
             _ = UpdateTrustButtonAvailabilityAsync();
         }
 
@@ -1548,41 +1586,163 @@ namespace docsigner_ilter
             catch { return null; }
         }
         // Tek format kaynağı: duplikasyon engelli
+        private static string NormalizeUiText(string? value)
+        {
+            if (string.IsNullOrEmpty(value))
+                return string.Empty;
+
+            string cleaned = value
+                .Replace("\0", string.Empty, StringComparison.Ordinal)
+                .Replace("\r", " ", StringComparison.Ordinal)
+                .Replace("\n", " ", StringComparison.Ordinal)
+                .Trim();
+
+            return Regex.Replace(cleaned, @"\s{2,}", " ");
+        }
+
         private string FormatDeviceLine(string? label, string? serial, string? subject)
         {
-            label = (label ?? "").Trim();
-            serial = (serial ?? "").Trim();
-            subject = (subject ?? "").Trim();
+            string rawLabel = NormalizeUiText(label);
+            string rawSerial = NormalizeUiText(serial);
+            string rawSubject = NormalizeUiText(subject);
 
-            if (string.IsNullOrWhiteSpace(serial))
+            if (string.IsNullOrWhiteSpace(rawSerial))
             {
-                var serialMatch = Regex.Match(label, @"\(([^)]+)\)");
+                var serialMatch = Regex.Match(rawLabel, @"\(([^)]+)\)");
                 if (serialMatch.Success)
-                    serial = serialMatch.Groups[1].Value.Trim();
+                    rawSerial = serialMatch.Groups[1].Value.Trim();
             }
 
-            if (string.IsNullOrWhiteSpace(subject))
+            if (string.IsNullOrWhiteSpace(rawSubject))
             {
-                int dashIndex = label.LastIndexOf(" - ", StringComparison.Ordinal);
-                if (dashIndex >= 0 && dashIndex + 3 < label.Length)
-                    subject = label.Substring(dashIndex + 3).Trim();
+                int dashIndex = rawLabel.LastIndexOf(" - ", StringComparison.Ordinal);
+                if (dashIndex >= 0 && dashIndex + 3 < rawLabel.Length)
+                    rawSubject = rawLabel[(dashIndex + 3)..].Trim();
             }
 
-            string deviceName = Regex.Replace(label, @"\s*\(.*?\)", string.Empty).Trim();
-            int firstDashIndex = deviceName.IndexOf(" - ", StringComparison.Ordinal);
-            if (firstDashIndex > 0)
-                deviceName = deviceName.Substring(0, firstDashIndex).Trim();
+            string deviceName = rawLabel;
+            int parenIndex = deviceName.IndexOf("(", StringComparison.Ordinal);
+            if (parenIndex > 0)
+                deviceName = deviceName[..parenIndex].Trim();
+
+            int dashNameIndex = deviceName.IndexOf(" - ", StringComparison.Ordinal);
+            if (dashNameIndex > 0)
+                deviceName = deviceName[..dashNameIndex].Trim();
 
             if (string.IsNullOrWhiteSpace(deviceName))
                 deviceName = "Bilinmeyen cihaz";
 
-            string display = deviceName;
-            if (!string.IsNullOrWhiteSpace(serial))
-                display += $" ({serial})";
-            if (!string.IsNullOrWhiteSpace(subject))
-                display += $" - {subject}";
+            var parts = new List<string> { deviceName };
+            if (!string.IsNullOrWhiteSpace(rawSerial))
+                parts[0] += $" ({rawSerial})";
+            if (!string.IsNullOrWhiteSpace(rawSubject))
+                parts.Add(rawSubject);
 
-            return display;
+            return string.Join(" - ", parts);
+        }
+
+        private static void ParseSignerComboItem(string? itemText, out string subject, out string serial)
+        {
+            subject = string.Empty;
+            serial = string.Empty;
+            itemText = NormalizeUiText(itemText);
+
+            if (string.IsNullOrWhiteSpace(itemText))
+                return;
+
+            var parts = itemText.Split('|');
+            if (parts.Length >= 3)
+            {
+                subject = parts[0].Trim();
+                serial = parts[^1].Trim();
+                if (!string.IsNullOrWhiteSpace(subject) || !string.IsNullOrWhiteSpace(serial))
+                    return;
+            }
+
+            var match = Regex.Match(
+                itemText,
+                @"^\s*(?<subject>.*?)\s*\|\s*Slot\s+\d+\s*\|\s*(?<serial>.*)\s*$",
+                RegexOptions.IgnoreCase);
+
+            if (!match.Success)
+                return;
+
+            subject = match.Groups["subject"].Value.Trim();
+            serial = match.Groups["serial"].Value.Trim();
+        }
+
+        private void UpdateHeaderFromSelectedDevice()
+        {
+            if (signerDevices.Count == 0 || cmbSignerDevice.SelectedIndex < 0 || cmbSignerDevice.SelectedIndex >= signerDevices.Count)
+                return;
+
+            var selected = signerDevices[cmbSignerDevice.SelectedIndex];
+            string comboText = NormalizeUiText(cmbSignerDevice.SelectedItem?.ToString() ?? cmbSignerDevice.Text ?? string.Empty);
+            ParseSignerComboItem(comboText, out var comboSubject, out var comboSerial);
+
+            string rawLabel = NormalizeUiText(selected.Label);
+            string deviceName = rawLabel;
+            int parenIndex = deviceName.IndexOf("(", StringComparison.Ordinal);
+            if (parenIndex > 0)
+                deviceName = deviceName[..parenIndex].Trim();
+            int dashIndex = deviceName.IndexOf(" - ", StringComparison.Ordinal);
+            if (dashIndex > 0)
+                deviceName = deviceName[..dashIndex].Trim();
+            if (string.IsNullOrWhiteSpace(deviceName))
+                deviceName = "AKIS";
+
+            // Header'da combobox verisi öncelikli kullanılır; alttaki alan zaten doğru formatta geliyor.
+            string subject = NormalizeUiText(comboSubject);
+            if (string.IsNullOrWhiteSpace(subject))
+                subject = NormalizeUiText(selected.Subject);
+            if (string.IsNullOrWhiteSpace(subject))
+            {
+                int dashLabelIndex = rawLabel.LastIndexOf(" - ", StringComparison.Ordinal);
+                if (dashLabelIndex >= 0 && dashLabelIndex + 3 < rawLabel.Length)
+                    subject = NormalizeUiText(rawLabel[(dashLabelIndex + 3)..]);
+            }
+            if (string.IsNullOrWhiteSpace(subject))
+                subject = "Kullanıcı";
+
+            string serial = NormalizeUiText(comboSerial);
+            if (string.IsNullOrWhiteSpace(serial))
+                serial = NormalizeUiText(selected.Serial);
+            if (string.IsNullOrWhiteSpace(serial))
+            {
+                var serialMatch = Regex.Match(rawLabel, @"\(([^)]+)\)");
+                if (serialMatch.Success)
+                    serial = NormalizeUiText(serialMatch.Groups[1].Value);
+            }
+
+            deviceSubject = subject;
+            string line = !string.IsNullOrWhiteSpace(subject) || !string.IsNullOrWhiteSpace(serial)
+                ? FormatDeviceLine(deviceName, serial, subject)
+                : deviceName;
+
+            // Son emniyet: combobox metni doluysa ve üst satır provider'a düştüyse combobox'tan tekrar kur.
+            if (string.Equals(line, deviceName, StringComparison.Ordinal) && !string.IsNullOrWhiteSpace(comboText))
+            {
+                ParseSignerComboItem(comboText, out var comboSubjectRetry, out var comboSerialRetry);
+                if (!string.IsNullOrWhiteSpace(comboSubjectRetry) || !string.IsNullOrWhiteSpace(comboSerialRetry))
+                {
+                    if (!string.IsNullOrWhiteSpace(comboSubjectRetry))
+                        subject = comboSubjectRetry;
+                    if (!string.IsNullOrWhiteSpace(comboSerialRetry))
+                        serial = comboSerialRetry;
+                    line = FormatDeviceLine(deviceName, serial, subject);
+                }
+            }
+
+            labelHosgeldiniz.Text = $"Hoş geldiniz, {subject}";
+            labelDeviceLine.Text = line;
+            labelDeviceLine.ForeColor = Color.FromArgb(0, 95, 170);
+            Console.WriteLine(
+                "[SimpleForm] Header satırı: Label='{0}', DtoSerial='{1}', DtoSubject='{2}', Combo='{3}', Sonuc='{4}'",
+                selected.Label ?? string.Empty,
+                selected.Serial ?? string.Empty,
+                selected.Subject ?? string.Empty,
+                comboText,
+                line);
         }
         private void LoadDevicesAndImzaBilgisi()
         {
@@ -1598,18 +1758,12 @@ namespace docsigner_ilter
                     labelDeviceLine.Text = "Kart bulunamadı. Lütfen kartı takıp Yenile butonuna basın.";
                     labelDeviceLine.ForeColor = Color.FromArgb(190, 40, 40);
                     labelHosgeldiniz.Text = "Hoş geldiniz..."; // Varsayılan
-                    labelMesaj.Text = "Smartcard algılanmadı. Yenile butonu ile tekrar deneyin.";
+                    labelMesaj.Text = "PDF belgenizi güvenle seçip imza atabilirsiniz.";
                     SetSignerStatus("İmza cihazı bulunamadı.", true, false);
                     return;
                 }
-                var d = devices.First();
-                deviceSubject = d.Subject?.Trim() ?? "Kullanıcı"; // Subject'i sakla
-                string line = FormatDeviceLine(d.Label, d.Serial, d.Subject);
-                labelDeviceLine.Text = string.IsNullOrWhiteSpace(line) ? "Bilinmeyen cihaz" : line;
-                labelDeviceLine.ForeColor = Color.FromArgb(0, 95, 170);
-                // Dinamik hoş geldiniz mesajı
-                labelHosgeldiniz.Text = $"Hoş geldiniz, {deviceSubject}";
-                // Merkez mesaj sabit
+
+                UpdateHeaderFromSelectedDevice();
                 labelMesaj.Text = "PDF belgenizi güvenle seçip imza atabilirsiniz.";
                 SetSignerStatus("Cihaz hazır. PDF seçip imzalayabilirsiniz.", false, false);
             }
@@ -1619,7 +1773,7 @@ namespace docsigner_ilter
                 labelDeviceLine.Text = $"Hata: {ex.Message}";
                 labelDeviceLine.ForeColor = Color.FromArgb(190, 40, 40);
                 labelHosgeldiniz.Text = "Hoş geldiniz..."; // Varsayılan hata durumunda
-                labelMesaj.Text = "Bir hata oluştu. Lütfen Yenile butonuna basın.";
+                labelMesaj.Text = "PDF belgenizi güvenle seçip imza atabilirsiniz.";
                 SetSignerStatus("Cihazlar okunamadı.", true, false);
             }
         }
@@ -1753,6 +1907,12 @@ namespace docsigner_ilter
                     {
                         SetTextPreview("PDF önizleme açılamadı. 'Seçileni Aç' ile Acrobat/varsayılan PDF görüntüleyicide açabilirsiniz.");
                     }
+                    else if (info.Length > MaxInlinePdfPreviewBytes)
+                    {
+                        labelPreviewInfo.Text =
+                            baseInfo + Environment.NewLine +
+                            "Önizleme motoru: Edge PDF (büyük dosya). Uygulama doğrulaması yine aşağıda gösterilir.";
+                    }
 
                     await UpdatePdfValidationStatusAsync(selectedPath, baseInfo);
                     return;
@@ -1816,11 +1976,23 @@ namespace docsigner_ilter
                     {
                         webPreviewPdf.CoreWebView2.Settings.AreDevToolsEnabled = false;
                         webPreviewPdf.CoreWebView2.Settings.IsStatusBarEnabled = false;
+                        webPreviewPdf.CoreWebView2.Settings.AreDefaultContextMenusEnabled = false;
                     }
                 }
 
                 txtPreview.Visible = false;
                 webPreviewPdf.Visible = true;
+
+                var info = new FileInfo(pdfPath);
+                if (info.Exists && info.Length > 0 && info.Length <= MaxInlinePdfPreviewBytes)
+                {
+                    byte[] pdfBytes = await File.ReadAllBytesAsync(pdfPath);
+                    string html = BuildPdfJsPreviewHtml(Convert.ToBase64String(pdfBytes), info.Name);
+                    webPreviewPdf.CoreWebView2!.NavigateToString(html);
+                    return true;
+                }
+
+                // Büyük PDF'lerde NavigateToString boyut limitine takılmamak için eski yola düş.
                 webPreviewPdf.Source = new Uri(pdfPath);
                 return true;
             }
@@ -1833,6 +2005,100 @@ namespace docsigner_ilter
             {
                 return false;
             }
+        }
+
+        private static string BuildPdfJsPreviewHtml(string base64Pdf, string fileName)
+        {
+            // Not: WebView2 NavigateToString metodu içerik boyutu limitine sahip olduğu için
+            // bu yöntem küçük/orta boy PDF'ler için kullanılır.
+            string safeFileName = fileName
+                .Replace("&", "&amp;", StringComparison.Ordinal)
+                .Replace("<", "&lt;", StringComparison.Ordinal)
+                .Replace(">", "&gt;", StringComparison.Ordinal);
+
+            return $@"<!doctype html>
+<html>
+<head>
+  <meta charset='utf-8' />
+  <meta name='viewport' content='width=device-width, initial-scale=1' />
+  <title>{safeFileName}</title>
+  <style>
+    :root {{ color-scheme: light; }}
+    html, body {{ margin: 0; padding: 0; background: #f4f7fb; font-family: Segoe UI, sans-serif; }}
+    #top {{
+      position: sticky; top: 0; z-index: 10;
+      padding: 10px 12px; background: #ffffff; border-bottom: 1px solid #dbe4f0;
+      color: #0f2d62; font-weight: 600; font-size: 13px;
+    }}
+    #status {{
+      padding: 8px 12px; font-size: 12px; color: #54657a; background: #ffffff;
+      border-bottom: 1px solid #e7edf5;
+    }}
+    #pages {{ padding: 12px; }}
+    .page-wrap {{
+      margin: 0 auto 14px auto; background: #ffffff; border: 1px solid #dbe4f0;
+      box-shadow: 0 2px 8px rgba(0,0,0,.05); width: fit-content;
+    }}
+    canvas {{ display: block; }}
+    .error {{ color: #b42424; font-weight: 600; }}
+  </style>
+  <script src='https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js'></script>
+</head>
+<body>
+  <div id='top'>{safeFileName}</div>
+  <div id='status'>PDF yükleniyor...</div>
+  <div id='pages'></div>
+  <script>
+    (function() {{
+      const statusEl = document.getElementById('status');
+      const pagesEl = document.getElementById('pages');
+      const b64 = '{base64Pdf}';
+
+      function base64ToUint8Array(base64) {{
+        const raw = atob(base64);
+        const out = new Uint8Array(raw.length);
+        for (let i = 0; i < raw.length; i++) out[i] = raw.charCodeAt(i);
+        return out;
+      }}
+
+      async function renderAllPages() {{
+        try {{
+          pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+          const data = base64ToUint8Array(b64);
+          const loadingTask = pdfjsLib.getDocument({{ data }});
+          const pdf = await loadingTask.promise;
+          statusEl.textContent = `Toplam ${{pdf.numPages}} sayfa yüklendi.`;
+
+          for (let pageNo = 1; pageNo <= pdf.numPages; pageNo++) {{
+            const page = await pdf.getPage(pageNo);
+            const viewport = page.getViewport({{ scale: 1 }});
+            const maxWidth = Math.max(720, (window.innerWidth || 1200) - 40);
+            const scale = Math.max(0.7, Math.min(2, maxWidth / viewport.width));
+            const scaled = page.getViewport({{ scale }});
+
+            const canvas = document.createElement('canvas');
+            const ctx = canvas.getContext('2d', {{ alpha: false }});
+            canvas.width = Math.floor(scaled.width);
+            canvas.height = Math.floor(scaled.height);
+
+            const wrap = document.createElement('div');
+            wrap.className = 'page-wrap';
+            wrap.appendChild(canvas);
+            pagesEl.appendChild(wrap);
+
+            await page.render({{ canvasContext: ctx, viewport: scaled }}).promise;
+          }}
+        }} catch (err) {{
+          statusEl.className = 'error';
+          statusEl.textContent = 'PDF önizleme (PDF.js) yüklenemedi: ' + (err?.message || err);
+        }}
+      }}
+
+      renderAllPages();
+    }})();
+  </script>
+</body>
+</html>";
         }
 
         private async Task UpdatePdfValidationStatusAsync(string pdfPath, string baseInfo)

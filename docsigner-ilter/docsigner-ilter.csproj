@@ -9,6 +9,7 @@
     <UseWindowsForms>true</UseWindowsForms>
     <ApplicationIcon>logos\favicon.ico</ApplicationIcon>
     <NoWarn>$(NoWarn);MSB3277</NoWarn>
+    <DefaultItemExcludes>$(DefaultItemExcludes);bin_hotfix\**;obj_hotfix\**;bin_hotfix/**;obj_hotfix/**</DefaultItemExcludes>
   </PropertyGroup>
 
   <ItemGroup>

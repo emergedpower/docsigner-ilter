@@ -1,0 +1,16 @@
+2026-02-19 13:46:42.630 +03:00 [INF] E-İmza Ajan App Başlatıldı! (http://localhost:5000)
+2026-02-19 13:46:42.668 +03:00 [INF] Endpoints: /health, /devices, /get-subject, /sign-xml (POST), /sign-pdf (POST). Bekleniyor...
+2026-02-19 13:46:42.668 +03:00 [INF] Lisans gereksiz: uygulama manuel imzalama modunda çalışıyor.
+2026-02-19 13:46:42.706 +03:00 [WRN] Overriding address(es) 'http://localhost:5000'. Binding to endpoints defined via IConfiguration and/or UseKestrel() instead.
+2026-02-19 13:46:42.715 +03:00 [INF] Now listening on: http://localhost:5000
+2026-02-19 13:46:42.716 +03:00 [INF] Application started. Press Ctrl+C to shut down.
+2026-02-19 13:46:42.716 +03:00 [INF] Hosting environment: Production
+2026-02-19 13:46:42.716 +03:00 [INF] Content root path: C:\Users\umut3\Desktop\docsigner-ilter
+2026-02-19 14:00:19.593 +03:00 [INF] E-İmza Ajan App Başlatıldı! (http://localhost:5000)
+2026-02-19 14:00:19.631 +03:00 [INF] Endpoints: /health, /devices, /get-subject, /sign-xml (POST), /sign-pdf (POST). Bekleniyor...
+2026-02-19 14:00:19.631 +03:00 [INF] Lisans gereksiz: uygulama manuel imzalama modunda çalışıyor.
+2026-02-19 14:00:19.670 +03:00 [WRN] Overriding address(es) 'http://localhost:5000'. Binding to endpoints defined via IConfiguration and/or UseKestrel() instead.
+2026-02-19 14:00:19.679 +03:00 [INF] Now listening on: http://localhost:5000
+2026-02-19 14:00:19.680 +03:00 [INF] Application started. Press Ctrl+C to shut down.
+2026-02-19 14:00:19.680 +03:00 [INF] Hosting environment: Production
+2026-02-19 14:00:19.680 +03:00 [INF] Content root path: C:\Users\umut3\Desktop\docsigner-ilter

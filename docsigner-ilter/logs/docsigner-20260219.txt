@@ -1,0 +1,9 @@
+2026-02-19 13:40:28.850 +03:00 [INF] E-İmza Ajan App Başlatıldı! (http://localhost:5000)
+2026-02-19 13:40:28.891 +03:00 [INF] Endpoints: /health, /devices, /get-subject, /sign-xml (POST), /sign-pdf (POST). Bekleniyor...
+2026-02-19 13:40:28.891 +03:00 [INF] Lisans gereksiz: uygulama manuel imzalama modunda çalışıyor.
+2026-02-19 13:40:28.928 +03:00 [WRN] Overriding address(es) 'http://localhost:5000'. Binding to endpoints defined via IConfiguration and/or UseKestrel() instead.
+2026-02-19 13:40:28.939 +03:00 [INF] Now listening on: http://localhost:5000
+2026-02-19 13:40:28.940 +03:00 [INF] Application started. Press Ctrl+C to shut down.
+2026-02-19 13:40:28.942 +03:00 [INF] Hosting environment: Production
+2026-02-19 13:40:28.943 +03:00 [INF] Content root path: C:\Users\umut3\Desktop\docsigner-ilter\docsigner-ilter
+2026-02-19 13:40:39.423 +03:00 [INF] Application is shutting down...

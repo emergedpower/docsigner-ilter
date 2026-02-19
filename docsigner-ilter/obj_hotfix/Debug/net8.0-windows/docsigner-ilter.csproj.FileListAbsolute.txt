@@ -1,0 +1,8 @@
+C:\Users\umut3\Desktop\docsigner-ilter\docsigner-ilter\obj_hotfix\Debug\net8.0-windows\docsigner-ilter.csproj.AssemblyReference.cache
+C:\Users\umut3\Desktop\docsigner-ilter\docsigner-ilter\obj_hotfix\Debug\net8.0-windows\docsigner_ilter.Form1.resources
+C:\Users\umut3\Desktop\docsigner-ilter\docsigner-ilter\obj_hotfix\Debug\net8.0-windows\docsigner-ilter.csproj.GenerateResource.cache
+C:\Users\umut3\Desktop\docsigner-ilter\docsigner-ilter\obj_hotfix\Debug\net8.0-windows\docsigner-ilter.GeneratedMSBuildEditorConfig.editorconfig
+C:\Users\umut3\Desktop\docsigner-ilter\docsigner-ilter\obj_hotfix\Debug\net8.0-windows\docsigner-ilter.AssemblyInfoInputs.cache
+C:\Users\umut3\Desktop\docsigner-ilter\docsigner-ilter\obj_hotfix\Debug\net8.0-windows\docsigner-ilter.AssemblyInfo.cs
+C:\Users\umut3\Desktop\docsigner-ilter\docsigner-ilter\obj_hotfix\Debug\net8.0-windows\docsigner-ilter.csproj.CoreCompileInputs.cache
+C:\Users\umut3\Desktop\docsigner-ilter\docsigner-ilter\obj_hotfix\Debug\net8.0-windows\docsigner-ilter.sourcelink.json

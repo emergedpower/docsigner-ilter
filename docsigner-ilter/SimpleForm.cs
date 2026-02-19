@@ -6,6 +6,9 @@ using System.Drawing.Drawing2D;
 using System.IO;
 using System.Linq;
 using System.Reflection;
+using System.Security.Cryptography;
+using System.Text;
+using System.Text.Json;
 using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks; // 🔑 Delay için (popup ikon fix)
@@ -42,6 +45,9 @@ namespace docsigner_ilter
         private Button btnSetupTrust = null!;
         private Label labelPin = null!;
         private TextBox txtPin = null!;
+        private Label labelPinSessionState = null!;
+        private Label labelPinSessionSerial = null!;
+        private Button btnEndPinSession = null!;
         private CheckBox chkAddTimestamp = null!;
         private Label labelPage = null!;
         private NumericUpDown numPage = null!;
@@ -76,14 +82,25 @@ namespace docsigner_ilter
         // Device info for dynamic greeting
         private string deviceSubject = string.Empty;
         private readonly List<ReceptServiceApp.SignatureDeviceDto> signerDevices = new();
+        private readonly Dictionary<string, string> _pinCacheBySerial = new(StringComparer.OrdinalIgnoreCase);
         private bool _isTrustReadyForSelectedDevice;
         private string? _trustReadyDeviceKey;
         private int _trustCheckVersion;
         private int _previewValidationVersion;
         private bool _allowClose;
+        private string? _activeDeviceSerialForPin;
+        private readonly string _pinCacheFilePath = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            "docsigner-ilter",
+            "pin-cache.dat");
+        private static readonly byte[] PinCacheEntropy = Encoding.UTF8.GetBytes("docsigner-ilter.pin.cache.v1");
+        private FormWindowState _lastVisibleWindowState = FormWindowState.Normal;
+        private Rectangle _lastVisibleBounds;
         public SimpleForm()
         {
             InitializeComponent();
+            _lastVisibleBounds = Bounds;
+            LoadRememberedPinCache();
             LoadLogoDynamic(); // 🔑 Önce ikon yükle (popup/tray için kritik)
             LoadDevicesAndImzaBilgisi();
             LoadSignedDocuments();
@@ -231,6 +248,12 @@ namespace docsigner_ilter
                 Text = "docsigner-ILTER"
             };
             trayIcon.DoubleClick += (s, e) => RestoreFromTray();
+            trayIcon.BalloonTipClicked += (s, e) => RestoreFromTray();
+            trayIcon.MouseClick += (s, e) =>
+            {
+                if (e.Button == MouseButtons.Left)
+                    RestoreFromTray();
+            };
             trayMenu = new ContextMenuStrip();
             var menuOpen = new ToolStripMenuItem("Aç");
             menuOpen.Click += (s, e) => RestoreFromTray();
@@ -375,6 +398,7 @@ namespace docsigner_ilter
             cmbSignerDevice.SelectedIndexChanged += async (s, e) =>
             {
                 UpdateHeaderFromSelectedDevice();
+                ApplyRememberedPinForSelectedDevice();
                 await UpdateTrustButtonAvailabilityAsync();
             };
             cmbSignerDevice.TextChanged += (s, e) => UpdateHeaderFromSelectedDevice();
@@ -450,6 +474,52 @@ namespace docsigner_ilter
                 Top = 148
             };
             signerCard.Controls.Add(txtPin);
+
+            labelPinSessionState = new Label
+            {
+                Text = "Oturum aktif",
+                Font = new Font("Segoe UI", 9.5f, FontStyle.Bold),
+                ForeColor = Color.FromArgb(10, 128, 80),
+                AutoSize = false,
+                Width = 240,
+                Height = 20,
+                Top = 128,
+                TextAlign = ContentAlignment.MiddleCenter,
+                AutoEllipsis = true,
+                Visible = false
+            };
+            signerCard.Controls.Add(labelPinSessionState);
+
+            labelPinSessionSerial = new Label
+            {
+                Text = string.Empty,
+                Font = new Font("Segoe UI", 9f, FontStyle.Bold),
+                ForeColor = Color.FromArgb(26, 49, 92),
+                AutoSize = false,
+                Width = 240,
+                Height = 19,
+                Top = 149,
+                TextAlign = ContentAlignment.MiddleCenter,
+                AutoEllipsis = true,
+                Visible = false
+            };
+            signerCard.Controls.Add(labelPinSessionSerial);
+
+            btnEndPinSession = new Button
+            {
+                Text = "Kapat",
+                Font = new Font("Segoe UI", 8.5f, FontStyle.Bold),
+                BackColor = Color.FromArgb(166, 45, 45),
+                ForeColor = Color.White,
+                FlatStyle = FlatStyle.Flat,
+                Width = 74,
+                Height = 28,
+                Top = 146,
+                Visible = false
+            };
+            btnEndPinSession.FlatAppearance.BorderSize = 0;
+            btnEndPinSession.Click += (s, e) => EndPinSessionForSelectedDevice();
+            signerCard.Controls.Add(btnEndPinSession);
 
             labelPage = new Label
             {
@@ -557,15 +627,45 @@ namespace docsigner_ilter
                 labelSignerHint.Width = signerCard.Width - labelSignerHint.Left - 20;
             }
 
+            btnSignPdf.Left = signerCard.Width - btnSignPdf.Width - 16;
+
+            int pageBlockRight = btnSignPdf.Left - 12;
+            numPage.Left = pageBlockRight - numPage.Width;
+            labelPage.Left = numPage.Left;
+
             int pinLeft = btnRefreshSignerDevices.Right + 12;
+            int pinAreaRight = labelPage.Left - 12;
+            int pinAreaWidth = Math.Max(92, pinAreaRight - pinLeft);
+
             labelPin.Left = pinLeft;
             txtPin.Left = pinLeft;
+            labelPin.Top = 128;
+            txtPin.Top = 148;
 
-            int pageLeft = txtPin.Right + 10;
-            labelPage.Left = pageLeft;
-            numPage.Left = pageLeft;
+            labelPinSessionState.Left = pinLeft;
+            labelPinSessionState.Top = 128;
+            labelPinSessionSerial.Left = pinLeft;
+            labelPinSessionSerial.Top = 149;
+            btnEndPinSession.Top = 146;
 
-            btnSignPdf.Left = signerCard.Width - btnSignPdf.Width - 16;
+            if (txtPin.Visible)
+            {
+                txtPin.Width = Math.Min(140, Math.Max(92, pinAreaWidth));
+            }
+            else
+            {
+                int sessionTextWidth = Math.Min(360, Math.Max(150, pinAreaWidth - btnEndPinSession.Width - 10));
+                labelPinSessionState.Width = sessionTextWidth;
+                labelPinSessionSerial.Width = sessionTextWidth;
+                btnEndPinSession.Left = labelPinSessionState.Right + 8;
+
+                if (btnEndPinSession.Right > pinAreaRight)
+                {
+                    btnEndPinSession.Left = pinAreaRight - btnEndPinSession.Width;
+                    labelPinSessionState.Width = Math.Max(120, btnEndPinSession.Left - pinLeft - 8);
+                    labelPinSessionSerial.Width = labelPinSessionState.Width;
+                }
+            }
 
             labelSignerStatus.Top = labelPdfPath.Top;
             labelSignerStatus.Left = Math.Max(16, btnSelectPdf.Left - 360);
@@ -990,6 +1090,17 @@ namespace docsigner_ilter
         // TRAY davranışı (popup için ikon kontrolü eklendi + fix)
         private async void MinimizeToTray()
         {
+            if (Visible)
+            {
+                if (WindowState == FormWindowState.Maximized || WindowState == FormWindowState.Normal)
+                    _lastVisibleWindowState = WindowState;
+
+                if (WindowState == FormWindowState.Maximized)
+                    _lastVisibleBounds = RestoreBounds;
+                else if (WindowState == FormWindowState.Normal)
+                    _lastVisibleBounds = Bounds;
+            }
+
             // 1) Ikonun hazır olduğundan emin ol
             if (_trayIcon == null)
                 _trayIcon = this.Icon ?? SystemIcons.Information;
@@ -1004,7 +1115,7 @@ namespace docsigner_ilter
             // 3) Balon ayarları (Visible TRUE olduktan sonra!)
             trayIcon.BalloonTipIcon = ToolTipIcon.Info;
             trayIcon.BalloonTipTitle = "docsigner-ILTER";
-            trayIcon.BalloonTipText = "Pencere gizlendi. Geri getirmek için iki kez tıklayın.";
+            trayIcon.BalloonTipText = "Pencere gizlendi. Balona veya tepsi ikonuna tıklayarak geri açabilirsiniz.";
 
             await Task.Delay(100);            // Kısa gecikme, render için
             trayIcon.ShowBalloonTip(3000);
@@ -1015,8 +1126,15 @@ namespace docsigner_ilter
         private void RestoreFromTray()
         {
             Show();
-            WindowState = FormWindowState.Normal;
+            if (WindowState == FormWindowState.Minimized)
+                WindowState = FormWindowState.Normal;
+            if (_lastVisibleBounds.Width > 0 && _lastVisibleBounds.Height > 0)
+                Bounds = _lastVisibleBounds;
+            WindowState = _lastVisibleWindowState == FormWindowState.Maximized
+                ? FormWindowState.Maximized
+                : FormWindowState.Normal;
             Activate();
+            BringToFront();
             trayIcon.Visible = false;
         }
 
@@ -1139,7 +1257,23 @@ namespace docsigner_ilter
                 return;
             }
 
-            string pin = (txtPin.Text ?? string.Empty).Trim();
+            var selectedDevice = signerDevices[cmbSignerDevice.SelectedIndex];
+            string selectedSerial = ResolveDeviceSerial(selectedDevice);
+            if (string.IsNullOrWhiteSpace(selectedSerial))
+            {
+                ParseSignerComboItem(cmbSignerDevice.SelectedItem?.ToString() ?? cmbSignerDevice.Text, out _, out var comboSerial);
+                selectedSerial = NormalizeUiText(comboSerial);
+            }
+            if (string.IsNullOrWhiteSpace(selectedSerial))
+                selectedSerial = NormalizeUiText(_activeDeviceSerialForPin);
+
+            string pin = NormalizeUiText(txtPin.Text);
+            if (pin.Length < 4 && TryGetRememberedPin(selectedSerial, out var rememberedPin))
+            {
+                pin = rememberedPin;
+                txtPin.Text = rememberedPin;
+            }
+
             if (pin.Length < 4)
             {
                 MessageBox.Show("PIN en az 4 karakter olmalıdır.", "Eksik Bilgi", MessageBoxButtons.OK, MessageBoxIcon.Warning);
@@ -1147,7 +1281,6 @@ namespace docsigner_ilter
                 return;
             }
 
-            var selectedDevice = signerDevices[cmbSignerDevice.SelectedIndex];
             var service = new ReceptServiceApp(new DummyLogger<ReceptServiceApp>());
             int? pageNumber = (int)numPage.Value;
 
@@ -1171,7 +1304,9 @@ namespace docsigner_ilter
                     options,
                     forceFreshLogin: false);
 
-                txtPin.Clear();
+                RememberPinForDevice(selectedSerial, pin);
+                Console.WriteLine($"[SimpleForm] PIN cache kayıt isteği: Serial='{selectedSerial}', PinLen={pin.Length}");
+                ApplyRememberedPinForSelectedDevice();
                 LoadSignedDocuments(result.filePath);
 
                 SetSignerStatus($"İmza tamamlandı: {Path.GetFileName(result.filePath)}", false, true);
@@ -1191,6 +1326,12 @@ namespace docsigner_ilter
             }
             catch (Exception ex)
             {
+                if (IsIncorrectPinError(ex.Message))
+                {
+                    ForgetPinForDevice(selectedSerial);
+                    txtPin.Clear();
+                    txtPin.Focus();
+                }
                 SetSignerStatus($"İmzalama başarısız: {ex.Message}", true, false);
                 MessageBox.Show($"PDF imzalama hatası:{Environment.NewLine}{ex.Message}", "Hata", MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
@@ -1391,6 +1532,7 @@ namespace docsigner_ilter
             btnSetupTrust.Enabled = !busy && !_isTrustReadyForSelectedDevice;
             cmbSignerDevice.Enabled = !busy;
             txtPin.Enabled = !busy;
+            btnEndPinSession.Enabled = !busy;
             numPage.Enabled = !busy;
             UseWaitCursor = busy;
         }
@@ -1439,6 +1581,7 @@ namespace docsigner_ilter
             }
 
             UpdateHeaderFromSelectedDevice();
+            ApplyRememberedPinForSelectedDevice();
             _ = UpdateTrustButtonAvailabilityAsync();
         }
 
@@ -1759,11 +1902,15 @@ namespace docsigner_ilter
                     labelDeviceLine.ForeColor = Color.FromArgb(190, 40, 40);
                     labelHosgeldiniz.Text = "Hoş geldiniz..."; // Varsayılan
                     labelMesaj.Text = "PDF belgenizi güvenle seçip imza atabilirsiniz.";
+                    _activeDeviceSerialForPin = null;
+                    txtPin.Clear();
+                    UpdatePinSessionUi(null, false);
                     SetSignerStatus("İmza cihazı bulunamadı.", true, false);
                     return;
                 }
 
                 UpdateHeaderFromSelectedDevice();
+                ApplyRememberedPinForSelectedDevice();
                 labelMesaj.Text = "PDF belgenizi güvenle seçip imza atabilirsiniz.";
                 SetSignerStatus("Cihaz hazır. PDF seçip imzalayabilirsiniz.", false, false);
             }
@@ -1774,8 +1921,273 @@ namespace docsigner_ilter
                 labelDeviceLine.ForeColor = Color.FromArgb(190, 40, 40);
                 labelHosgeldiniz.Text = "Hoş geldiniz..."; // Varsayılan hata durumunda
                 labelMesaj.Text = "PDF belgenizi güvenle seçip imza atabilirsiniz.";
+                _activeDeviceSerialForPin = null;
+                txtPin.Clear();
+                UpdatePinSessionUi(null, false);
                 SetSignerStatus("Cihazlar okunamadı.", true, false);
             }
+        }
+
+        private static bool IsIncorrectPinError(string? message)
+        {
+            string text = NormalizeUiText(message).ToLowerInvariant();
+            return text.Contains("pin hatalı", StringComparison.Ordinal) ||
+                   text.Contains("pin incorrect", StringComparison.Ordinal) ||
+                   text.Contains("ckr_pin_incorrect", StringComparison.Ordinal);
+        }
+
+        private string ResolveDeviceSerial(ReceptServiceApp.SignatureDeviceDto device)
+        {
+            string serial = NormalizeUiText(device.Serial);
+            if (!string.IsNullOrWhiteSpace(serial))
+                return serial;
+
+            string comboText = NormalizeUiText(cmbSignerDevice?.SelectedItem?.ToString() ?? cmbSignerDevice?.Text ?? string.Empty);
+            ParseSignerComboItem(comboText, out _, out var comboSerial);
+            return NormalizeUiText(comboSerial);
+        }
+
+        private string ResolveCurrentDeviceSubject()
+        {
+            if (cmbSignerDevice != null &&
+                signerDevices.Count > 0 &&
+                cmbSignerDevice.SelectedIndex >= 0 &&
+                cmbSignerDevice.SelectedIndex < signerDevices.Count)
+            {
+                var device = signerDevices[cmbSignerDevice.SelectedIndex];
+                string subject = NormalizeUiText(device.Subject);
+                if (!string.IsNullOrWhiteSpace(subject))
+                    return subject;
+
+                string comboText = NormalizeUiText(cmbSignerDevice.SelectedItem?.ToString() ?? cmbSignerDevice.Text ?? string.Empty);
+                ParseSignerComboItem(comboText, out var comboSubject, out _);
+                subject = NormalizeUiText(comboSubject);
+                if (!string.IsNullOrWhiteSpace(subject))
+                    return subject;
+            }
+
+            return NormalizeUiText(deviceSubject);
+        }
+
+        private void ApplyRememberedPinForSelectedDevice()
+        {
+            if (txtPin == null || cmbSignerDevice == null || signerDevices.Count == 0 ||
+                cmbSignerDevice.SelectedIndex < 0 || cmbSignerDevice.SelectedIndex >= signerDevices.Count)
+            {
+                _activeDeviceSerialForPin = null;
+                if (txtPin != null)
+                    txtPin.Clear();
+                UpdatePinSessionUi(null, false);
+                return;
+            }
+
+            string serial = ResolveDeviceSerial(signerDevices[cmbSignerDevice.SelectedIndex]);
+            if (string.IsNullOrWhiteSpace(serial))
+            {
+                _activeDeviceSerialForPin = null;
+                txtPin.Clear();
+                UpdatePinSessionUi(null, false);
+                return;
+            }
+
+            bool changedDevice = !string.Equals(_activeDeviceSerialForPin, serial, StringComparison.OrdinalIgnoreCase);
+            _activeDeviceSerialForPin = serial;
+
+            if (TryGetRememberedPin(serial, out var rememberedPin))
+            {
+                if (changedDevice || string.IsNullOrWhiteSpace(txtPin.Text))
+                    txtPin.Text = rememberedPin;
+                UpdatePinSessionUi(serial, true);
+            }
+            else if (changedDevice)
+            {
+                txtPin.Clear();
+                UpdatePinSessionUi(serial, false);
+            }
+            else
+            {
+                UpdatePinSessionUi(serial, false);
+            }
+        }
+
+        private void RememberPinForDevice(string serial, string pin)
+        {
+            serial = NormalizeUiText(serial);
+            pin = NormalizeUiText(pin);
+            if (string.IsNullOrWhiteSpace(serial) || string.IsNullOrWhiteSpace(pin))
+                return;
+
+            _pinCacheBySerial[serial] = pin;
+            SaveRememberedPinCache();
+        }
+
+        private bool TryGetRememberedPin(string serial, out string pin)
+        {
+            pin = string.Empty;
+            serial = NormalizeUiText(serial);
+            if (string.IsNullOrWhiteSpace(serial))
+                return false;
+
+            if (!_pinCacheBySerial.TryGetValue(serial, out var remembered))
+                return false;
+
+            remembered = NormalizeUiText(remembered);
+            if (remembered.Length < 4)
+                return false;
+
+            pin = remembered;
+            return true;
+        }
+
+        private void ForgetPinForDevice(string serial)
+        {
+            serial = NormalizeUiText(serial);
+            if (string.IsNullOrWhiteSpace(serial))
+                return;
+
+            if (_pinCacheBySerial.Remove(serial))
+                SaveRememberedPinCache();
+        }
+
+        private void EndPinSessionForSelectedDevice()
+        {
+            if (cmbSignerDevice == null || signerDevices.Count == 0 ||
+                cmbSignerDevice.SelectedIndex < 0 || cmbSignerDevice.SelectedIndex >= signerDevices.Count)
+                return;
+
+            string serial = ResolveDeviceSerial(signerDevices[cmbSignerDevice.SelectedIndex]);
+            if (!string.IsNullOrWhiteSpace(serial))
+                ForgetPinForDevice(serial);
+
+            txtPin.Clear();
+            UpdatePinSessionUi(serial, false);
+            txtPin.Focus();
+            SetSignerStatus("Oturum kapatıldı. Bu cihaz için PIN tekrar istenecek.", false, false);
+        }
+
+        private void UpdatePinSessionUi(string? serial, bool active)
+        {
+            if (labelPin == null || txtPin == null || labelPinSessionState == null || labelPinSessionSerial == null || btnEndPinSession == null)
+                return;
+
+            labelPin.Visible = !active;
+            txtPin.Visible = !active;
+            labelPinSessionState.Visible = active;
+            labelPinSessionSerial.Visible = active;
+            btnEndPinSession.Visible = active;
+
+            if (active)
+            {
+                string subject = ResolveCurrentDeviceSubject();
+                if (subject.Length > 38)
+                    subject = subject[..38] + "...";
+
+                string shownSerial = NormalizeUiText(serial);
+                if (string.IsNullOrWhiteSpace(shownSerial) &&
+                    cmbSignerDevice != null &&
+                    signerDevices.Count > 0 &&
+                    cmbSignerDevice.SelectedIndex >= 0 &&
+                    cmbSignerDevice.SelectedIndex < signerDevices.Count)
+                {
+                    shownSerial = ResolveDeviceSerial(signerDevices[cmbSignerDevice.SelectedIndex]);
+                }
+
+                labelPinSessionState.Text = string.IsNullOrWhiteSpace(subject)
+                    ? "Oturum aktif"
+                    : $"Oturum aktif: {subject}";
+                labelPinSessionSerial.Text = shownSerial;
+                labelPinSessionSerial.Visible = !string.IsNullOrWhiteSpace(shownSerial);
+            }
+            else
+            {
+                labelPinSessionState.Text = "Oturum aktif";
+                labelPinSessionSerial.Text = string.Empty;
+                labelPinSessionSerial.Visible = false;
+            }
+
+            LayoutSignerCard();
+        }
+
+        private void LoadRememberedPinCache()
+        {
+            try
+            {
+                _pinCacheBySerial.Clear();
+                if (!File.Exists(_pinCacheFilePath))
+                {
+                    Console.WriteLine($"[SimpleForm] PIN cache dosyası yok: {_pinCacheFilePath}");
+                    return;
+                }
+
+                string envelopeJson = File.ReadAllText(_pinCacheFilePath, Encoding.UTF8);
+                var envelope = JsonSerializer.Deserialize<PinCacheEnvelope>(envelopeJson);
+                if (envelope == null || string.IsNullOrWhiteSpace(envelope.Data))
+                    return;
+
+                byte[] cipher = Convert.FromBase64String(envelope.Data);
+                byte[] plain = ProtectedData.Unprotect(cipher, PinCacheEntropy, DataProtectionScope.CurrentUser);
+                string pinsJson = Encoding.UTF8.GetString(plain);
+                var loaded = JsonSerializer.Deserialize<Dictionary<string, string>>(pinsJson);
+                if (loaded == null)
+                    return;
+
+                foreach (var kv in loaded)
+                {
+                    string serial = NormalizeUiText(kv.Key);
+                    string pin = NormalizeUiText(kv.Value);
+                    if (!string.IsNullOrWhiteSpace(serial) && pin.Length >= 4)
+                        _pinCacheBySerial[serial] = pin;
+                }
+
+                Console.WriteLine($"[SimpleForm] PIN cache yüklendi. Adet={_pinCacheBySerial.Count}, Yol={_pinCacheFilePath}");
+            }
+            catch (Exception ex)
+            {
+                _pinCacheBySerial.Clear();
+                Console.WriteLine($"[SimpleForm] PIN cache okunamadı, sıfırlandı. Yol={_pinCacheFilePath}, Hata={ex.Message}");
+            }
+        }
+
+        private void SaveRememberedPinCache()
+        {
+            try
+            {
+                if (_pinCacheBySerial.Count == 0)
+                {
+                    if (File.Exists(_pinCacheFilePath))
+                        File.Delete(_pinCacheFilePath);
+                    Console.WriteLine($"[SimpleForm] PIN cache temizlendi. Yol={_pinCacheFilePath}");
+                    return;
+                }
+
+                string? dir = Path.GetDirectoryName(_pinCacheFilePath);
+                if (!string.IsNullOrWhiteSpace(dir))
+                    Directory.CreateDirectory(dir);
+
+                string pinsJson = JsonSerializer.Serialize(_pinCacheBySerial);
+                byte[] plain = Encoding.UTF8.GetBytes(pinsJson);
+                byte[] cipher = ProtectedData.Protect(plain, PinCacheEntropy, DataProtectionScope.CurrentUser);
+
+                var envelope = new PinCacheEnvelope
+                {
+                    Data = Convert.ToBase64String(cipher),
+                    UpdatedAtUtc = DateTime.UtcNow
+                };
+
+                File.WriteAllText(_pinCacheFilePath, JsonSerializer.Serialize(envelope), Encoding.UTF8);
+                Console.WriteLine($"[SimpleForm] PIN cache kaydedildi. Adet={_pinCacheBySerial.Count}, Yol={_pinCacheFilePath}");
+            }
+            catch (Exception ex)
+            {
+                // Sessiz: PIN hatırlama yardımcı özellik, imzalama akışını bozmasın.
+                Console.WriteLine($"[SimpleForm] PIN cache kaydı başarısız. Yol={_pinCacheFilePath}, Hata={ex.Message}");
+            }
+        }
+
+        private sealed class PinCacheEnvelope
+        {
+            public string Data { get; set; } = string.Empty;
+            public DateTime UpdatedAtUtc { get; set; }
         }
 
         private void LoadSignedDocuments(string? preferredPath = null)

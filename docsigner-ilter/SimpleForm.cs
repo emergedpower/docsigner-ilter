@@ -11,6 +11,8 @@ using System.Threading.Tasks; // 🔑 Delay için (popup ikon fix)
 using System.Windows.Forms;
 using docsigner_ilter.Services;
 using Microsoft.Extensions.Logging;
+using Microsoft.Web.WebView2.Core;
+using Microsoft.Web.WebView2.WinForms;
 
 namespace docsigner_ilter
 {
@@ -34,6 +36,7 @@ namespace docsigner_ilter
         private Label labelSignerDevice = null!;
         private ComboBox cmbSignerDevice = null!;
         private Button btnRefreshSignerDevices = null!;
+        private Button btnSetupTrust = null!;
         private Label labelPin = null!;
         private TextBox txtPin = null!;
         private CheckBox chkAddTimestamp = null!;
@@ -53,8 +56,13 @@ namespace docsigner_ilter
         private Label labelPreviewHeader = null!;
         private Label labelPreviewInfo = null!;
         private RichTextBox txtPreview = null!;
+        private WebView2? webPreviewPdf;
+        private bool isWebView2Unavailable;
         private string? signedDocsDir;
         private const int MaxPreviewChars = 15000;
+        private const int PreferredSplitDistance = 360;
+        private const int DesiredSplitMinLeft = 300;
+        private const int DesiredSplitMinRight = 280;
         // 🔑 YENİ: Icon field'ları (dispose için, popup/tray için lifetime yönetimi)
         private Icon? _formIcon;
         private Icon? _trayIcon;
@@ -151,7 +159,7 @@ namespace docsigner_ilter
             // MERKEZ MESAJ
             labelMesaj = new Label
             {
-                Text = "PDF belgenizi secip PAdES uyumlu elektronik imza atabilirsiniz.",
+                Text = "PDF belgenizi seçip PAdES uyumlu elektronik imza atabilirsiniz.",
                 Font = new Font("Segoe UI", 10),
                 ForeColor = Color.FromArgb(44, 61, 80),
                 AutoSize = false,
@@ -163,7 +171,7 @@ namespace docsigner_ilter
             // YENİLE BUTONU (Gizle butonunun yanına)
             btnYenile = new Button
             {
-                Text = "Cihaz Yenile",
+                Text = "Cihazı Yenile",
                 Font = new Font("Segoe UI", 10, FontStyle.Bold),
                 BackColor = Color.FromArgb(33, 120, 196),
                 ForeColor = Color.White,
@@ -242,7 +250,7 @@ namespace docsigner_ilter
 
             labelSignerTitle = new Label
             {
-                Text = "PDF Imzalama",
+                Text = "PDF İmzalama",
                 Font = new Font("Segoe UI", 11, FontStyle.Bold),
                 ForeColor = Color.FromArgb(15, 45, 98),
                 AutoSize = false,
@@ -255,7 +263,7 @@ namespace docsigner_ilter
 
             labelSignerHint = new Label
             {
-                Text = "Belge secin, PIN girin ve imzalayin. Imza alani son sayfada sag-alta yerlestirilir.",
+                Text = "Belge seçin, PIN girin ve imzalayın. İmza alanı son sayfada sağ alta yerleştirilir.",
                 Font = new Font("Segoe UI", 9),
                 ForeColor = Color.FromArgb(80, 95, 112),
                 AutoSize = false,
@@ -283,6 +291,7 @@ namespace docsigner_ilter
             {
                 ReadOnly = true,
                 Font = new Font("Segoe UI", 9),
+                PlaceholderText = "İmzalanacak PDF belgesini seçin...",
                 Left = 16,
                 Top = 90,
                 Height = 30,
@@ -293,7 +302,7 @@ namespace docsigner_ilter
 
             btnSelectPdf = new Button
             {
-                Text = "Belge Sec",
+                Text = "Belge Seç",
                 Font = new Font("Segoe UI", 9, FontStyle.Bold),
                 BackColor = Color.FromArgb(33, 120, 196),
                 ForeColor = Color.White,
@@ -308,7 +317,7 @@ namespace docsigner_ilter
 
             labelSignerDevice = new Label
             {
-                Text = "Imza Cihazi",
+                Text = "İmza Cihazı",
                 Font = new Font("Segoe UI", 9, FontStyle.Bold),
                 ForeColor = Color.FromArgb(42, 60, 80),
                 AutoSize = false,
@@ -331,7 +340,7 @@ namespace docsigner_ilter
 
             btnRefreshSignerDevices = new Button
             {
-                Text = "Cihazlari Yenile",
+                Text = "Cihazları Yenile",
                 Font = new Font("Segoe UI", 9, FontStyle.Bold),
                 BackColor = Color.FromArgb(17, 105, 189),
                 ForeColor = Color.White,
@@ -344,9 +353,24 @@ namespace docsigner_ilter
             btnRefreshSignerDevices.Click += (s, e) =>
             {
                 LoadDevicesAndImzaBilgisi();
-                SetSignerStatus("Cihaz listesi guncellendi.", false, false);
+                SetSignerStatus("Cihaz listesi güncellendi.", false, false);
             };
             signerCard.Controls.Add(btnRefreshSignerDevices);
+
+            btnSetupTrust = new Button
+            {
+                Text = "Güven Zinciri Kur",
+                Font = new Font("Segoe UI", 8.5f, FontStyle.Bold),
+                BackColor = Color.FromArgb(46, 120, 74),
+                ForeColor = Color.White,
+                FlatStyle = FlatStyle.Flat,
+                Width = 148,
+                Height = 28,
+                Top = 34
+            };
+            btnSetupTrust.FlatAppearance.BorderSize = 0;
+            btnSetupTrust.Click += async (s, e) => await SetupSignerTrustAsync();
+            signerCard.Controls.Add(btnSetupTrust);
 
             labelPin = new Label
             {
@@ -384,9 +408,9 @@ namespace docsigner_ilter
 
             numPage = new NumericUpDown
             {
-                Minimum = 0,
+                Minimum = 1,
                 Maximum = 9999,
-                Value = 0,
+                Value = 1,
                 Font = new Font("Segoe UI", 9),
                 Width = 74,
                 Height = 30,
@@ -396,7 +420,7 @@ namespace docsigner_ilter
 
             chkAddTimestamp = new CheckBox
             {
-                Text = "Timestamp ekle (TSA ayari varsa)",
+                Text = "Timestamp ekle (TSA ayarı varsa)",
                 Font = new Font("Segoe UI", 8.5f),
                 ForeColor = Color.FromArgb(54, 71, 92),
                 AutoSize = true,
@@ -406,7 +430,7 @@ namespace docsigner_ilter
 
             btnSignPdf = new Button
             {
-                Text = "PDF Imzala",
+                Text = "PDF İmzala",
                 Font = new Font("Segoe UI", 9, FontStyle.Bold),
                 BackColor = Color.FromArgb(21, 148, 94),
                 ForeColor = Color.White,
@@ -421,13 +445,13 @@ namespace docsigner_ilter
 
             labelSignerStatus = new Label
             {
-                Text = "Belge secilmedi.",
+                Text = "Belge seçilmedi.",
                 Font = new Font("Segoe UI", 8.5f),
                 ForeColor = Color.FromArgb(128, 85, 0),
                 AutoSize = false,
                 Height = 20,
                 Left = 820,
-                Top = 93,
+                Top = 68,
                 Width = 300,
                 TextAlign = ContentAlignment.MiddleRight
             };
@@ -447,10 +471,20 @@ namespace docsigner_ilter
                 btnSelectPdf.Left = signerCard.Width - btnSelectPdf.Width - 16;
 
             if (txtPdfPath != null && btnSelectPdf != null)
-                txtPdfPath.Width = Math.Max(260, btnSelectPdf.Left - txtPdfPath.Left - 10);
+                txtPdfPath.Width = Math.Max(320, btnSelectPdf.Left - txtPdfPath.Left - 10);
 
             if (btnRefreshSignerDevices != null && cmbSignerDevice != null)
                 btnRefreshSignerDevices.Left = cmbSignerDevice.Right + 8;
+
+            if (btnSetupTrust != null)
+            {
+                btnSetupTrust.Left = signerCard.Width - btnSetupTrust.Width - 16;
+                labelSignerHint.Width = Math.Max(360, btnSetupTrust.Left - labelSignerHint.Left - 10);
+            }
+            else
+            {
+                labelSignerHint.Width = signerCard.Width - labelSignerHint.Left - 20;
+            }
 
             int pinLeft = btnRefreshSignerDevices.Right + 12;
             labelPin.Left = pinLeft;
@@ -466,8 +500,9 @@ namespace docsigner_ilter
             if (chkAddTimestamp.Right > btnSignPdf.Left - 10)
                 chkAddTimestamp.Left = Math.Max(numPage.Right + 6, btnSignPdf.Left - chkAddTimestamp.Width - 10);
 
-            labelSignerStatus.Left = Math.Max(16, btnSignPdf.Left - 340);
-            labelSignerStatus.Width = signerCard.Width - labelSignerStatus.Left - 16;
+            labelSignerStatus.Top = labelPdfPath.Top;
+            labelSignerStatus.Left = Math.Max(16, btnSelectPdf.Left - 360);
+            labelSignerStatus.Width = Math.Max(140, signerCard.Width - labelSignerStatus.Left - 16);
         }
         private void InitializeSignatureViewerUI()
         {
@@ -481,7 +516,7 @@ namespace docsigner_ilter
 
             labelViewerTitle = new Label
             {
-                Text = "Imzali Dosyalar",
+                Text = "İmzalı Dosyalar",
                 Font = new Font("Segoe UI", 11, FontStyle.Bold),
                 ForeColor = Color.FromArgb(15, 45, 98),
                 Dock = DockStyle.Top,
@@ -489,7 +524,6 @@ namespace docsigner_ilter
                 Padding = new Padding(16, 10, 0, 0),
                 BackColor = Color.Transparent
             };
-            viewerCard.Controls.Add(labelViewerTitle);
 
             viewerToolbar = new Panel
             {
@@ -497,7 +531,6 @@ namespace docsigner_ilter
                 Height = 48,
                 BackColor = Color.Transparent
             };
-            viewerCard.Controls.Add(viewerToolbar);
 
             cmbFileFilter = new ComboBox
             {
@@ -506,14 +539,14 @@ namespace docsigner_ilter
                 Location = new Point(16, 10),
                 Width = 130
             };
-            cmbFileFilter.Items.AddRange(new object[] { "Tum Dosyalar", "XML", "XSIG", "PDF" });
+            cmbFileFilter.Items.AddRange(new object[] { "Tüm Dosyalar", "XML", "XSIG", "PDF" });
             cmbFileFilter.SelectedIndex = 0;
             cmbFileFilter.SelectedIndexChanged += (s, e) => LoadSignedDocuments();
             viewerToolbar.Controls.Add(cmbFileFilter);
 
             btnDocsRefresh = new Button
             {
-                Text = "Dosyalari Yenile",
+                Text = "Dosyaları Yenile",
                 Font = new Font("Segoe UI", 9, FontStyle.Bold),
                 BackColor = Color.FromArgb(17, 105, 189),
                 ForeColor = Color.White,
@@ -527,7 +560,7 @@ namespace docsigner_ilter
 
             btnOpenSelected = new Button
             {
-                Text = "Seciliyi Ac",
+                Text = "Seçileni Aç",
                 Font = new Font("Segoe UI", 9, FontStyle.Bold),
                 BackColor = Color.FromArgb(0, 122, 204),
                 ForeColor = Color.White,
@@ -541,7 +574,7 @@ namespace docsigner_ilter
 
             btnOpenFolder = new Button
             {
-                Text = "Klasoru Ac",
+                Text = "Klasörü Aç",
                 Font = new Font("Segoe UI", 9, FontStyle.Bold),
                 BackColor = Color.FromArgb(0, 122, 204),
                 ForeColor = Color.White,
@@ -556,10 +589,14 @@ namespace docsigner_ilter
             splitViewer = new SplitContainer
             {
                 Dock = DockStyle.Fill,
-                SplitterDistance = 360,
                 BackColor = Color.White
             };
-            viewerCard.Controls.Add(splitViewer);
+            splitViewer.SplitterMoved += (s, e) =>
+            {
+                EnsureSplitViewerDistance();
+                ResizeSignedDocsColumns();
+            };
+            splitViewer.SizeChanged += (s, e) => EnsureSplitViewerDistance();
 
             listSignedDocs = new ListView
             {
@@ -575,6 +612,7 @@ namespace docsigner_ilter
             listSignedDocs.Columns.Add("Tur");
             listSignedDocs.Columns.Add("Boyut");
             listSignedDocs.Columns.Add("Tarih");
+            listSignedDocs.Resize += (s, e) => ResizeSignedDocsColumns();
             listSignedDocs.SelectedIndexChanged += (s, e) => ShowSelectedFilePreview();
             listSignedDocs.DoubleClick += (s, e) => OpenSelectedSignedFile();
             splitViewer.Panel1.Controls.Add(listSignedDocs);
@@ -590,13 +628,21 @@ namespace docsigner_ilter
             };
             splitViewer.Panel2.Controls.Add(txtPreview);
 
+            webPreviewPdf = new WebView2
+            {
+                Dock = DockStyle.Fill,
+                Visible = false,
+                DefaultBackgroundColor = Color.White
+            };
+            splitViewer.Panel2.Controls.Add(webPreviewPdf);
+
             labelPreviewInfo = new Label
             {
                 Dock = DockStyle.Top,
                 Height = 50,
                 Font = new Font("Segoe UI", 8.5f),
                 ForeColor = Color.FromArgb(80, 80, 80),
-                Text = "Secili dosya bilgisi burada gorunur.",
+                Text = "Seçili dosya bilgisi burada görünür.",
                 Padding = new Padding(8, 4, 8, 2),
                 BackColor = Color.White
             };
@@ -608,11 +654,16 @@ namespace docsigner_ilter
                 Height = 30,
                 Font = new Font("Segoe UI", 10, FontStyle.Bold),
                 ForeColor = Color.FromArgb(20, 60, 130),
-                Text = "Onizleme",
+                Text = "Önizleme",
                 Padding = new Padding(8, 6, 8, 0),
                 BackColor = Color.White
             };
             splitViewer.Panel2.Controls.Add(labelPreviewHeader);
+
+            // Dock sırası sabit: başlık + toolbar her zaman görünür, liste üstte kaybolmaz.
+            viewerCard.Controls.Add(splitViewer);
+            viewerCard.Controls.Add(viewerToolbar);
+            viewerCard.Controls.Add(labelViewerTitle);
         }
 
         private void LayoutSignatureViewer()
@@ -633,6 +684,8 @@ namespace docsigner_ilter
                 btnOpenSelected.Left = btnOpenFolder.Left - btnOpenSelected.Width - 8;
                 btnOpenSelected.Top = 9;
             }
+
+            EnsureSplitViewerDistance();
         }
 
         private void ResizeSignedDocsColumns()
@@ -647,6 +700,55 @@ namespace docsigner_ilter
             listSignedDocs.Columns[3].Width = width - listSignedDocs.Columns[0].Width - listSignedDocs.Columns[1].Width - listSignedDocs.Columns[2].Width - 4;
         }
 
+        private void EnsureSplitViewerDistance()
+        {
+            if (splitViewer == null || splitViewer.IsDisposed)
+                return;
+
+            int totalWidth = splitViewer.ClientSize.Width;
+            if (totalWidth <= 1)
+                return;
+
+            int minLeft = DesiredSplitMinLeft;
+            int minRight = DesiredSplitMinRight;
+
+            // Küçük genişliklerde min değerleri daralt.
+            if (minLeft + minRight >= totalWidth)
+            {
+                int available = Math.Max(2, totalWidth - 1);
+                minLeft = Math.Max(80, available / 2);
+                minRight = Math.Max(80, available - minLeft);
+
+                if (minLeft + minRight >= totalWidth)
+                {
+                    minLeft = Math.Max(1, (totalWidth / 2) - 1);
+                    minRight = Math.Max(1, totalWidth - minLeft - 1);
+                }
+            }
+
+            int maxLeft = totalWidth - minRight;
+            int target = splitViewer.SplitterDistance;
+
+            if (target < minLeft || target > maxLeft)
+                target = Math.Clamp(PreferredSplitDistance, minLeft, maxLeft);
+
+            try
+            {
+                if (splitViewer.SplitterDistance != target)
+                    splitViewer.SplitterDistance = target;
+
+                if (splitViewer.Panel1MinSize != minLeft)
+                    splitViewer.Panel1MinSize = minLeft;
+
+                if (splitViewer.Panel2MinSize != minRight)
+                    splitViewer.Panel2MinSize = minRight;
+            }
+            catch (InvalidOperationException)
+            {
+                // Layout henüz hazır değilse bir sonraki SizeChanged/Resize'da tekrar denenecek.
+            }
+        }
+
         // 🔑 YENİ: Icon dispose (ObjectDisposedException fix, popup/tray ikonlarını koru)
         protected override void Dispose(bool disposing)
         {
@@ -655,6 +757,7 @@ namespace docsigner_ilter
                 _formIcon?.Dispose();
                 _trayIcon?.Dispose();
                 pictureLogo?.Image?.Dispose(); // PictureBox image'ını da temizle
+                webPreviewPdf?.Dispose();
                 trayIcon?.Dispose();
             }
             base.Dispose(disposing);
@@ -772,17 +875,17 @@ namespace docsigner_ilter
 
                 if (string.IsNullOrWhiteSpace(selectedPath))
                 {
-                    SetSignerStatus("Belge secimi iptal edildi.", false, false);
+                    SetSignerStatus("Belge seçimi iptal edildi.", false, false);
                     return;
                 }
 
                 txtPdfPath.Text = selectedPath;
-                SetSignerStatus($"Belge secildi: {Path.GetFileName(selectedPath)}", false, false);
+                SetSignerStatus($"Belge seçildi: {Path.GetFileName(selectedPath)}", false, false);
             }
             catch (Exception ex)
             {
-                SetSignerStatus($"Belge secme hatasi: {ex.Message}", true, false);
-                MessageBox.Show($"Belge secme sirasinda hata olustu:{Environment.NewLine}{ex.Message}", "Hata", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                SetSignerStatus($"Belge seçme hatası: {ex.Message}", true, false);
+                MessageBox.Show($"Belge seçme sırasında hata oluştu:{Environment.NewLine}{ex.Message}", "Hata", MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
         }
 
@@ -790,7 +893,7 @@ namespace docsigner_ilter
         {
             return new OpenFileDialog
             {
-                Filter = "PDF Dosyalari (*.pdf)|*.pdf",
+                Filter = "PDF Dosyaları (*.pdf)|*.pdf",
                 CheckFileExists = true,
                 CheckPathExists = true,
                 Multiselect = false,
@@ -798,7 +901,7 @@ namespace docsigner_ilter
                 AutoUpgradeEnabled = false,
                 DereferenceLinks = true,
                 InitialDirectory = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments),
-                Title = "Imzalanacak PDF Belgesi Secin"
+                Title = "İmzalanacak PDF Belgesi Seçin"
             };
         }
 
@@ -842,27 +945,27 @@ namespace docsigner_ilter
             string filePath = (txtPdfPath.Text ?? string.Empty).Trim();
             if (string.IsNullOrWhiteSpace(filePath) || !File.Exists(filePath))
             {
-                MessageBox.Show("Lutfen once imzalanacak PDF belgesini secin.", "Eksik Bilgi", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                MessageBox.Show("Lütfen önce imzalanacak PDF belgesini seçin.", "Eksik Bilgi", MessageBoxButtons.OK, MessageBoxIcon.Warning);
                 return;
             }
 
             if (cmbSignerDevice.SelectedIndex < 0 || cmbSignerDevice.SelectedIndex >= signerDevices.Count)
             {
-                MessageBox.Show("Lutfen bir e-imza cihazi secin.", "Eksik Bilgi", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                MessageBox.Show("Lütfen bir e-imza cihazı seçin.", "Eksik Bilgi", MessageBoxButtons.OK, MessageBoxIcon.Warning);
                 return;
             }
 
             string pin = (txtPin.Text ?? string.Empty).Trim();
             if (pin.Length < 4)
             {
-                MessageBox.Show("PIN en az 4 karakter olmalidir.", "Eksik Bilgi", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                MessageBox.Show("PIN en az 4 karakter olmalıdır.", "Eksik Bilgi", MessageBoxButtons.OK, MessageBoxIcon.Warning);
                 txtPin.Focus();
                 return;
             }
 
             var selectedDevice = signerDevices[cmbSignerDevice.SelectedIndex];
             var service = new ReceptServiceApp(new DummyLogger<ReceptServiceApp>());
-            int? pageNumber = numPage.Value <= 0 ? null : (int)numPage.Value;
+            int? pageNumber = (int)numPage.Value;
 
             var options = new ReceptServiceApp.PdfSignatureOptions
             {
@@ -874,7 +977,7 @@ namespace docsigner_ilter
             try
             {
                 SetSignerBusy(true);
-                SetSignerStatus("PDF imzalanıyor, lutfen bekleyin...", false, false);
+                SetSignerStatus("PDF imzalanıyor, lütfen bekleyin...", false, false);
 
                 byte[] pdfBytes = await File.ReadAllBytesAsync(filePath);
                 var result = await service.SignPdf(
@@ -888,11 +991,11 @@ namespace docsigner_ilter
                 LoadSignedDocuments(result.filePath);
 
                 string timestampText = result.timestampApplied ? "Timestamp eklendi." : "Timestamp eklenmedi.";
-                SetSignerStatus($"Imza tamamlandi: {Path.GetFileName(result.filePath)} | {timestampText}", false, true);
+                SetSignerStatus($"İmza tamamlandı: {Path.GetFileName(result.filePath)} | {timestampText}", false, true);
 
                 if (MessageBox.Show(
-                        $"PDF basariyla imzalandi.{Environment.NewLine}{Path.GetFileName(result.filePath)}{Environment.NewLine}{timestampText}{Environment.NewLine}{Environment.NewLine}Dosyayi acmak ister misiniz?",
-                        "Imzalama Basarili",
+                        $"PDF başarıyla imzalandı.{Environment.NewLine}{Path.GetFileName(result.filePath)}{Environment.NewLine}{timestampText}{Environment.NewLine}{Environment.NewLine}Dosyayı açmak ister misiniz?",
+                        "İmzalama Başarılı",
                         MessageBoxButtons.YesNo,
                         MessageBoxIcon.Information) == DialogResult.Yes)
                 {
@@ -905,8 +1008,66 @@ namespace docsigner_ilter
             }
             catch (Exception ex)
             {
-                SetSignerStatus($"Imzalama basarisiz: {ex.Message}", true, false);
-                MessageBox.Show($"PDF imzalama hatasi:{Environment.NewLine}{ex.Message}", "Hata", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                SetSignerStatus($"İmzalama başarısız: {ex.Message}", true, false);
+                MessageBox.Show($"PDF imzalama hatası:{Environment.NewLine}{ex.Message}", "Hata", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
+            finally
+            {
+                SetSignerBusy(false);
+            }
+        }
+
+        private async Task SetupSignerTrustAsync()
+        {
+            if (cmbSignerDevice.SelectedIndex < 0 || cmbSignerDevice.SelectedIndex >= signerDevices.Count)
+            {
+                MessageBox.Show("Lütfen önce bir e-imza cihazı seçin.", "Eksik Bilgi", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+
+            var selectedDevice = signerDevices[cmbSignerDevice.SelectedIndex];
+            var service = new ReceptServiceApp(new DummyLogger<ReceptServiceApp>());
+
+            try
+            {
+                SetSignerBusy(true);
+                SetSignerStatus("Sertifika zinciri kuruluyor, lütfen bekleyin...", false, false);
+
+                var trustResult = await Task.Run(() => service.EnsureSignerTrust(selectedDevice.Id));
+
+                if (!trustResult.Success)
+                {
+                    SetSignerStatus($"Güven zinciri kurulamadı: {trustResult.Message}", true, false);
+                    MessageBox.Show(
+                        $"Güven zinciri kurulamadı:{Environment.NewLine}{trustResult.Message}",
+                        "Hata",
+                        MessageBoxButtons.OK,
+                        MessageBoxIcon.Error);
+                    return;
+                }
+
+                string warnings = trustResult.Warnings.Count > 0
+                    ? $"{Environment.NewLine}Uyarılar: {string.Join(" | ", trustResult.Warnings.Take(2))}"
+                    : string.Empty;
+
+                SetSignerStatus(
+                    $"Zincir: aday Root {trustResult.CandidateRootCount}, aday Ara {trustResult.CandidateIntermediateCount}, " +
+                    $"eklenen Root +{trustResult.AddedRootCount} (mevcut {trustResult.ExistingRootCount}), " +
+                    $"eklenen Ara +{trustResult.AddedIntermediateCount} (mevcut {trustResult.ExistingIntermediateCount}), " +
+                    $"Acrobat ayarı +{trustResult.AcrobatRegistryValuesWritten}, Doğrulama: {trustResult.ValidationStatus}",
+                    !trustResult.ValidationSucceeded,
+                    trustResult.ValidationSucceeded);
+
+                MessageBox.Show(
+                    $"{trustResult.Message}{warnings}{Environment.NewLine}{Environment.NewLine}Yeni bir PDF imzalayıp tekrar doğrulayın.",
+                    "Güven Zinciri",
+                    MessageBoxButtons.OK,
+                    trustResult.ValidationSucceeded ? MessageBoxIcon.Information : MessageBoxIcon.Warning);
+            }
+            catch (Exception ex)
+            {
+                SetSignerStatus($"Güven zinciri hatası: {ex.Message}", true, false);
+                MessageBox.Show($"Güven zinciri işlemi sırasında hata oluştu:{Environment.NewLine}{ex.Message}", "Hata", MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
             finally
             {
@@ -919,6 +1080,7 @@ namespace docsigner_ilter
             btnSignPdf.Enabled = !busy;
             btnSelectPdf.Enabled = !busy;
             btnRefreshSignerDevices.Enabled = !busy;
+            btnSetupTrust.Enabled = !busy;
             cmbSignerDevice.Enabled = !busy;
             txtPin.Enabled = !busy;
             numPage.Enabled = !busy;
@@ -1119,11 +1281,35 @@ namespace docsigner_ilter
             label = (label ?? "").Trim();
             serial = (serial ?? "").Trim();
             subject = (subject ?? "").Trim();
-            string display = string.IsNullOrWhiteSpace(label) ? "Bilinmeyen cihaz" : label;
-            if (!string.IsNullOrEmpty(serial) && !display.Contains(serial))
+
+            if (string.IsNullOrWhiteSpace(serial))
+            {
+                var serialMatch = Regex.Match(label, @"\(([^)]+)\)");
+                if (serialMatch.Success)
+                    serial = serialMatch.Groups[1].Value.Trim();
+            }
+
+            if (string.IsNullOrWhiteSpace(subject))
+            {
+                int dashIndex = label.LastIndexOf(" - ", StringComparison.Ordinal);
+                if (dashIndex >= 0 && dashIndex + 3 < label.Length)
+                    subject = label.Substring(dashIndex + 3).Trim();
+            }
+
+            string deviceName = Regex.Replace(label, @"\s*\(.*?\)", string.Empty).Trim();
+            int firstDashIndex = deviceName.IndexOf(" - ", StringComparison.Ordinal);
+            if (firstDashIndex > 0)
+                deviceName = deviceName.Substring(0, firstDashIndex).Trim();
+
+            if (string.IsNullOrWhiteSpace(deviceName))
+                deviceName = "Bilinmeyen cihaz";
+
+            string display = deviceName;
+            if (!string.IsNullOrWhiteSpace(serial))
                 display += $" ({serial})";
-            if (!string.IsNullOrEmpty(subject) && !display.Contains(subject))
+            if (!string.IsNullOrWhiteSpace(subject))
                 display += $" - {subject}";
+
             return display;
         }
         private void LoadDevicesAndImzaBilgisi()
@@ -1141,7 +1327,7 @@ namespace docsigner_ilter
                     labelDeviceLine.ForeColor = Color.FromArgb(190, 40, 40);
                     labelHosgeldiniz.Text = "Hoş geldiniz..."; // Varsayılan
                     labelMesaj.Text = "Smartcard algılanmadı. Yenile butonu ile tekrar deneyin.";
-                    SetSignerStatus("Imza cihazi bulunamadi.", true, false);
+                    SetSignerStatus("İmza cihazı bulunamadı.", true, false);
                     return;
                 }
                 var d = devices.First();
@@ -1152,8 +1338,8 @@ namespace docsigner_ilter
                 // Dinamik hoş geldiniz mesajı
                 labelHosgeldiniz.Text = $"Hoş geldiniz, {deviceSubject}";
                 // Merkez mesaj sabit
-                labelMesaj.Text = "PDF belgenizi secip guvenli elektronik imza atabilirsiniz.";
-                SetSignerStatus("Cihaz hazir. PDF secip imzalayabilirsiniz.", false, false);
+                labelMesaj.Text = "PDF belgenizi güvenle seçip imza atabilirsiniz.";
+                SetSignerStatus("Cihaz hazır. PDF seçip imzalayabilirsiniz.", false, false);
             }
             catch (Exception ex)
             {
@@ -1162,7 +1348,7 @@ namespace docsigner_ilter
                 labelDeviceLine.ForeColor = Color.FromArgb(190, 40, 40);
                 labelHosgeldiniz.Text = "Hoş geldiniz..."; // Varsayılan hata durumunda
                 labelMesaj.Text = "Bir hata oluştu. Lütfen Yenile butonuna basın.";
-                SetSignerStatus("Cihazlar okunamadi.", true, false);
+                SetSignerStatus("Cihazlar okunamadı.", true, false);
             }
         }
 
@@ -1177,21 +1363,30 @@ namespace docsigner_ilter
             try
             {
                 listSignedDocs.Items.Clear();
-                txtPreview.Clear();
+                SetTextPreview(string.Empty);
 
                 if (string.IsNullOrWhiteSpace(signedDocsDir) || !Directory.Exists(signedDocsDir))
                 {
-                    labelPreviewHeader.Text = "Onizleme";
-                    labelPreviewInfo.Text = "SignedDocuments klasoru bulunamadi.";
-                    txtPreview.Text = "Imzali dosya olustugunda burada listelenecek.";
+                    labelPreviewHeader.Text = "Önizleme";
+                    labelPreviewInfo.Text = "SignedDocuments klasörü bulunamadı.";
+                    SetTextPreview("İmzalı dosya oluştuğunda burada listelenecek.");
                     return;
                 }
+
+                string? preferredFullPath = string.IsNullOrWhiteSpace(preferredPath)
+                    ? null
+                    : Path.GetFullPath(preferredPath);
 
                 var files = Directory
                     .EnumerateFiles(signedDocsDir, "*.*", SearchOption.TopDirectoryOnly)
                     .Where(ShouldShowFile)
                     .Select(p => new FileInfo(p))
-                    .OrderByDescending(f => f.LastWriteTimeUtc)
+                    .OrderByDescending(f =>
+                        preferredFullPath != null &&
+                        string.Equals(f.FullName, preferredFullPath, StringComparison.OrdinalIgnoreCase))
+                    .ThenByDescending(f => f.LastWriteTimeUtc)
+                    .ThenByDescending(f => f.CreationTimeUtc)
+                    .ThenByDescending(f => f.Name, StringComparer.OrdinalIgnoreCase)
                     .ToList();
 
                 foreach (var file in files)
@@ -1206,9 +1401,9 @@ namespace docsigner_ilter
 
                 if (files.Count == 0)
                 {
-                    labelPreviewHeader.Text = "Onizleme";
-                    labelPreviewInfo.Text = $"Dosya bulunamadi. Klasor: {signedDocsDir}";
-                    txtPreview.Text = "Imzali XML/XSIG/PDF dosyalari burada goruntulenecek.";
+                    labelPreviewHeader.Text = "Önizleme";
+                    labelPreviewInfo.Text = $"Dosya bulunamadı. Klasör: {signedDocsDir}";
+                    SetTextPreview("İmzalı XML/XSIG/PDF dosyaları burada görüntülenecek.");
                     return;
                 }
 
@@ -1224,13 +1419,23 @@ namespace docsigner_ilter
                 selectedItem.Selected = true;
                 selectedItem.Focused = true;
                 selectedItem.EnsureVisible();
+
+                try
+                {
+                    listSignedDocs.TopItem = listSignedDocs.Items[0];
+                }
+                catch
+                {
+                    // TopItem handle bazı durumlarda henüz hazır olmayabilir.
+                }
+
                 ShowSelectedFilePreview();
             }
             catch (Exception ex)
             {
-                labelPreviewHeader.Text = "Onizleme";
-                labelPreviewInfo.Text = $"Dosya listesi yuklenemedi: {ex.Message}";
-                txtPreview.Text = ex.ToString();
+                labelPreviewHeader.Text = "Önizleme";
+                labelPreviewInfo.Text = $"Dosya listesi yüklenemedi: {ex.Message}";
+                SetTextPreview(ex.ToString());
             }
             finally
             {
@@ -1241,7 +1446,7 @@ namespace docsigner_ilter
         private bool ShouldShowFile(string path)
         {
             string ext = Path.GetExtension(path).ToLowerInvariant();
-            string filter = (cmbFileFilter?.SelectedItem?.ToString() ?? "Tum Dosyalar").ToUpperInvariant();
+            string filter = (cmbFileFilter?.SelectedItem?.ToString() ?? "Tüm Dosyalar").ToUpperInvariant();
 
             if (filter == "XML")
                 return ext == ".xml";
@@ -1253,7 +1458,7 @@ namespace docsigner_ilter
             return ext == ".xml" || ext == ".xsig" || ext == ".pdf" || ext == ".txt";
         }
 
-        private void ShowSelectedFilePreview()
+        private async void ShowSelectedFilePreview()
         {
             string? selectedPath = GetSelectedSignedFilePath();
             if (string.IsNullOrWhiteSpace(selectedPath))
@@ -1267,8 +1472,14 @@ namespace docsigner_ilter
                     labelPreviewHeader.Text = info.Name;
                     labelPreviewInfo.Text =
                         $"{info.FullName}{Environment.NewLine}" +
-                        $"Boyut: {FormatFileSize(info.Length)} | Son Degisim: {info.LastWriteTime:dd.MM.yyyy HH:mm:ss} | PDF belgesi";
-                    txtPreview.Text = "PDF onizleme bu panelde desteklenmiyor. 'Seciliyi Ac' ile Acrobat/varsayilan PDF goruntuleyicide acabilirsiniz.";
+                        $"Boyut: {FormatFileSize(info.Length)} | Son Değişim: {info.LastWriteTime:dd.MM.yyyy HH:mm:ss} | PDF belgesi";
+
+                    bool previewOk = await TryShowPdfPreviewAsync(selectedPath);
+                    if (!previewOk)
+                    {
+                        SetTextPreview("PDF önizleme açılamadı. 'Seçileni Aç' ile Acrobat/varsayılan PDF görüntüleyicide açabilirsiniz.");
+                    }
+
                     return;
                 }
 
@@ -1286,21 +1497,63 @@ namespace docsigner_ilter
                 labelPreviewHeader.Text = info.Name;
                 labelPreviewInfo.Text =
                     $"{info.FullName}{Environment.NewLine}" +
-                    $"Boyut: {FormatFileSize(info.Length)} | Son Degisim: {info.LastWriteTime:dd.MM.yyyy HH:mm:ss} | {summary}";
+                    $"Boyut: {FormatFileSize(info.Length)} | Son Değişim: {info.LastWriteTime:dd.MM.yyyy HH:mm:ss} | {summary}";
 
-                txtPreview.Text = clipped
-                    ? content + Environment.NewLine + Environment.NewLine + $"... onizleme {MaxPreviewChars} karakterle sinirlandi."
+                string previewText = clipped
+                    ? content + Environment.NewLine + Environment.NewLine + $"... önizleme {MaxPreviewChars} karakterle sınırlandı."
                     : content;
-
-                txtPreview.SelectionStart = 0;
-                txtPreview.SelectionLength = 0;
-                txtPreview.ScrollToCaret();
+                SetTextPreview(previewText);
             }
             catch (Exception ex)
             {
-                labelPreviewHeader.Text = "Onizleme";
-                labelPreviewInfo.Text = $"Dosya okunamadi: {selectedPath}";
-                txtPreview.Text = ex.ToString();
+                labelPreviewHeader.Text = "Önizleme";
+                labelPreviewInfo.Text = $"Dosya okunamadı: {selectedPath}";
+                SetTextPreview(ex.ToString());
+            }
+        }
+
+        private void SetTextPreview(string text)
+        {
+            if (webPreviewPdf != null)
+                webPreviewPdf.Visible = false;
+
+            txtPreview.Visible = true;
+            txtPreview.Text = text;
+            txtPreview.SelectionStart = 0;
+            txtPreview.SelectionLength = 0;
+            txtPreview.ScrollToCaret();
+        }
+
+        private async Task<bool> TryShowPdfPreviewAsync(string pdfPath)
+        {
+            if (webPreviewPdf == null || isWebView2Unavailable)
+                return false;
+
+            try
+            {
+                if (webPreviewPdf.CoreWebView2 == null)
+                {
+                    await webPreviewPdf.EnsureCoreWebView2Async();
+                    if (webPreviewPdf.CoreWebView2 != null)
+                    {
+                        webPreviewPdf.CoreWebView2.Settings.AreDevToolsEnabled = false;
+                        webPreviewPdf.CoreWebView2.Settings.IsStatusBarEnabled = false;
+                    }
+                }
+
+                txtPreview.Visible = false;
+                webPreviewPdf.Visible = true;
+                webPreviewPdf.Source = new Uri(pdfPath);
+                return true;
+            }
+            catch (WebView2RuntimeNotFoundException)
+            {
+                isWebView2Unavailable = true;
+                return false;
+            }
+            catch
+            {
+                return false;
             }
         }
 
@@ -1311,7 +1564,7 @@ namespace docsigner_ilter
                 return "PDF belgesi";
 
             if (extension != ".xml" && extension != ".xsig")
-                return "Metin dosyasi";
+                return "Metin dosyası";
 
             int signatureCount = Regex.Matches(xmlText, @"<\s*Signature\b", RegexOptions.IgnoreCase).Count;
             int digestCount = Regex.Matches(xmlText, @"<\s*DigestValue\b", RegexOptions.IgnoreCase).Count;
@@ -1356,7 +1609,7 @@ namespace docsigner_ilter
             string? filePath = GetSelectedSignedFilePath();
             if (string.IsNullOrWhiteSpace(filePath))
             {
-                MessageBox.Show("Lutfen once bir dosya secin.", "Bilgi", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                MessageBox.Show("Lütfen önce bir dosya seçin.", "Bilgi", MessageBoxButtons.OK, MessageBoxIcon.Information);
                 return;
             }
 
@@ -1370,7 +1623,7 @@ namespace docsigner_ilter
             }
             catch (Exception ex)
             {
-                MessageBox.Show($"Dosya acilamadi: {ex.Message}", "Hata", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                MessageBox.Show($"Dosya açılamadı: {ex.Message}", "Hata", MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
         }
 
@@ -1390,7 +1643,7 @@ namespace docsigner_ilter
             }
             catch (Exception ex)
             {
-                MessageBox.Show($"Klasor acilamadi: {ex.Message}", "Hata", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                MessageBox.Show($"Klasör açılamadı: {ex.Message}", "Hata", MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
         }
 

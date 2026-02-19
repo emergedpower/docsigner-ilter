@@ -7,14 +7,18 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
 using System.Numerics;
+using System.Net.Http;
 using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
 using System.Security.Cryptography.Xml;
+using System.Formats.Asn1;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Xml;
 using System.Text.RegularExpressions; // ✅ eklendi (TCKN parse)
+using System.Security.Principal;
+using Microsoft.Win32;
 using iText.Bouncycastleconnector;
 using iText.Commons.Bouncycastle.Cert;
 using iText.Forms.Form.Element;
@@ -55,6 +59,10 @@ namespace docsigner_ilter.Services
 
         // ✅ AppType.SingleThreaded kullanıyorsun: PKCS#11 çağrılarını uygulama kilitlemeli
         private static readonly SemaphoreSlim _pkcs11GlobalLock = new SemaphoreSlim(1, 1);
+        private static readonly HttpClient _httpClient = new HttpClient
+        {
+            Timeout = TimeSpan.FromSeconds(10)
+        };
 
         public ReceptServiceApp(ILogger<ReceptServiceApp> logger)
         {
@@ -165,6 +173,27 @@ namespace docsigner_ilter.Services
             public string? TsaUrl { get; set; }
             public string? TsaUsername { get; set; }
             public string? TsaPassword { get; set; }
+            public bool AutoSetupTrustChain { get; set; } = true;
+            public bool TryInstallTrustToLocalMachine { get; set; } = true;
+            public bool ConfigureAcrobatWindowsStoreIntegration { get; set; } = true;
+        }
+
+        public class SignerTrustSetupResult
+        {
+            public bool Success { get; set; }
+            public string Message { get; set; } = string.Empty;
+            public string SignerSubject { get; set; } = string.Empty;
+            public string SignerThumbprint { get; set; } = string.Empty;
+            public bool ValidationSucceeded { get; set; }
+            public string ValidationStatus { get; set; } = string.Empty;
+            public int CandidateRootCount { get; set; }
+            public int CandidateIntermediateCount { get; set; }
+            public int AddedRootCount { get; set; }
+            public int AddedIntermediateCount { get; set; }
+            public int ExistingRootCount { get; set; }
+            public int ExistingIntermediateCount { get; set; }
+            public int AcrobatRegistryValuesWritten { get; set; }
+            public List<string> Warnings { get; set; } = new List<string>();
         }
 
         #region Cihaz Listeleme
@@ -280,6 +309,88 @@ namespace docsigner_ilter.Services
             var now = DateTime.UtcNow;
             return now > nb && now < na;
         }
+
+        public SignerTrustSetupResult EnsureSignerTrust(int? slotIndex)
+        {
+            var result = new SignerTrustSetupResult();
+
+            if (!slotIndex.HasValue || slotIndex.Value < 0)
+            {
+                result.Success = false;
+                result.Message = "Geçersiz slot bilgisi.";
+                return result;
+            }
+
+            _pkcs11GlobalLock.Wait();
+            try
+            {
+                var lib = GetOrLoadLibrary();
+                var slots = lib.GetSlotList(SlotsType.WithTokenPresent);
+                if (slots == null || slots.Count == 0)
+                    throw new Exception("Takılı e-imza kartı/token bulunamadı.");
+
+                int slotIdx = slotIndex.Value;
+                if (slotIdx < 0 || slotIdx >= slots.Count)
+                    throw new Exception("Geçersiz slot.");
+
+                using var session = slots[slotIdx].OpenSession(SessionType.ReadOnly);
+                var signerCert = GetBestSigningCertificateFromSession(session);
+                var tokenCertificates = GetAllCertificatesFromSession(session);
+                result.SignerSubject = signerCert.Subject;
+                result.SignerThumbprint = signerCert.Thumbprint ?? string.Empty;
+
+                var chainCandidates = BuildTrustChainCandidates(signerCert, result, tokenCertificates);
+                result.CandidateRootCount = chainCandidates.Count(x =>
+                    !string.Equals(x.Thumbprint, signerCert.Thumbprint, StringComparison.OrdinalIgnoreCase) &&
+                    DistinguishedNameEquals(x.Subject, x.Issuer));
+                result.CandidateIntermediateCount = chainCandidates.Count(x =>
+                    !string.Equals(x.Thumbprint, signerCert.Thumbprint, StringComparison.OrdinalIgnoreCase) &&
+                    !DistinguishedNameEquals(x.Subject, x.Issuer));
+                if (result.CandidateRootCount == 0 && result.CandidateIntermediateCount == 0)
+                {
+                    result.Warnings.Add("İmzalayan sertifikası dışında zincir adayı bulunamadı (AIA/store erişimini kontrol edin).");
+                }
+                InstallChainCertificatesToStores(chainCandidates, signerCert, result, tryLocalMachine: true);
+                EnsureAcrobatWindowsStoreIntegration(result);
+
+                using var validationChain = new X509Chain();
+                validationChain.ChainPolicy.RevocationMode = X509RevocationMode.Online;
+                validationChain.ChainPolicy.RevocationFlag = X509RevocationFlag.EntireChain;
+                validationChain.ChainPolicy.VerificationFlags = X509VerificationFlags.NoFlag;
+                validationChain.ChainPolicy.DisableCertificateDownloads = false;
+                validationChain.ChainPolicy.UrlRetrievalTimeout = TimeSpan.FromSeconds(8);
+
+                bool valid = validationChain.Build(signerCert);
+                result.ValidationSucceeded = valid;
+                result.ValidationStatus = validationChain.ChainStatus == null || validationChain.ChainStatus.Length == 0
+                    ? "OK"
+                    : string.Join(", ", validationChain.ChainStatus.Select(x => x.Status.ToString()).Distinct());
+
+                result.Success = true;
+                result.Message =
+                    $"Güven zinciri kontrolü tamamlandı. Aday Root: {result.CandidateRootCount}, Aday Ara: {result.CandidateIntermediateCount}. " +
+                    $"Root eklendi: {result.AddedRootCount} (mevcut: {result.ExistingRootCount}), " +
+                    $"Ara eklendi: {result.AddedIntermediateCount} (mevcut: {result.ExistingIntermediateCount}). " +
+                    $"Doğrulama: {(result.ValidationSucceeded ? "Başarılı" : "Başarısız")} ({result.ValidationStatus}). " +
+                    $"Acrobat ayar yazımı: {result.AcrobatRegistryValuesWritten}";
+
+                _logger.LogInformation(
+                    "Trust setup tamamlandı. Slot={Slot}, Subject={Subject}, CandidateRoot={CandidateRoot}, CandidateInt={CandidateInt}, RootAdded={RootAdded}, IntAdded={IntAdded}, Validation={Validation}",
+                    slotIdx, result.SignerSubject, result.CandidateRootCount, result.CandidateIntermediateCount, result.AddedRootCount, result.AddedIntermediateCount, result.ValidationStatus);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "EnsureSignerTrust sırasında hata.");
+                result.Success = false;
+                result.Message = ex.Message;
+            }
+            finally
+            {
+                _pkcs11GlobalLock.Release();
+            }
+
+            return result;
+        }
         #endregion
 
         #region İMZALAMA
@@ -344,13 +455,42 @@ namespace docsigner_ilter.Services
                         _sessionCache.TryAdd(slotIdx, session);
                     }
 
-                    var cert = GetSigningCertificate(session);
-                    var key = GetPrivateKey(session);
+                    var signingMaterial = GetSigningMaterial(session);
+                    var cert = signingMaterial.certificate;
+                    var key = signingMaterial.privateKey;
                     var placement = ResolveSignaturePlacement(pdfContent, options);
                     var signerName = ResolveSignerName(cert, options.SignerDisplayName);
                     var fieldName = BuildFieldName(options.SignatureFieldName);
-                    var chain = BuildCertificateChain(cert);
+                    var chain = BuildCertificateChain(cert, signingMaterial.certificates);
                     bool shouldUseTimestamp = options.EnableTimestamp && !string.IsNullOrWhiteSpace(options.TsaUrl);
+
+                    if (options.AutoSetupTrustChain)
+                    {
+                        try
+                        {
+                            var trustWarmup = new SignerTrustSetupResult();
+                            var trustCandidates = BuildTrustChainCandidates(cert, trustWarmup, signingMaterial.certificates);
+                            InstallChainCertificatesToStores(
+                                trustCandidates,
+                                cert,
+                                trustWarmup,
+                                options.TryInstallTrustToLocalMachine);
+                            if (options.ConfigureAcrobatWindowsStoreIntegration)
+                                EnsureAcrobatWindowsStoreIntegration(trustWarmup);
+
+                            _logger.LogInformation(
+                                "PDF imza öncesi trust warm-up tamamlandı. AddedRoot={Root}, AddedInt={Int}, Validation={Validation}, AcrobatReg={AcrobatReg}",
+                                trustWarmup.AddedRootCount,
+                                trustWarmup.AddedIntermediateCount,
+                                trustWarmup.ValidationStatus,
+                                trustWarmup.AcrobatRegistryValuesWritten);
+                        }
+                        catch (Exception trustEx)
+                        {
+                            _logger.LogWarning(trustEx, "PDF imza öncesi trust warm-up sırasında hata oluştu, imzalama devam edecek.");
+                        }
+                    }
+
                     var signatureAppearance = BuildSignatureAppearance(
                         fieldName,
                         signerName,
@@ -374,6 +514,7 @@ namespace docsigner_ilter.Services
                         .SetStampingProperties(new StampingProperties().UseAppendMode());
 
                     bool timestampApplied = false;
+                    bool tryLtProfile = false;
                     if (shouldUseTimestamp)
                     {
                         var tsa = new TSAClientBouncyCastle(
@@ -384,7 +525,11 @@ namespace docsigner_ilter.Services
                             "SHA-256");
 
                         twoPhaseSigner.SetTSAClient(tsa);
+                        twoPhaseSigner.SetOcspClient(new OcspClientBouncyCastle());
+                        twoPhaseSigner.SetCrlClient(new CrlClientOnline());
+                        twoPhaseSigner.SetTrustedCertificates(chain.ToList());
                         timestampApplied = true;
+                        tryLtProfile = true;
                     }
 
                     byte[] preparedPdfBytes;
@@ -404,37 +549,70 @@ namespace docsigner_ilter.Services
                     }
 
                     byte[] signedPdfBytes;
-                    using (var preparedReader = new PdfReader(new MemoryStream(preparedPdfBytes)))
-                    using (var finalOutputStream = new MemoryStream())
+                    string profileUsed;
+                    if (timestampApplied && tryLtProfile)
                     {
-                        if (timestampApplied)
+                        try
                         {
+                            using var ltReader = new PdfReader(new MemoryStream(preparedPdfBytes));
+                            using var ltOutputStream = new MemoryStream();
+                            twoPhaseSigner.SignCMSContainerWithBaselineLTProfile(
+                                externalSignature,
+                                ltReader,
+                                ltOutputStream,
+                                fieldName,
+                                cmsContainer);
+                            signedPdfBytes = ltOutputStream.ToArray();
+                            profileUsed = "LT";
+                        }
+                        catch (Exception ltEx)
+                        {
+                            _logger.LogWarning(ltEx, "Baseline-LT imza başarısız oldu, Baseline-T profiline düşülüyor.");
+                            using var tReader = new PdfReader(new MemoryStream(preparedPdfBytes));
+                            using var tOutputStream = new MemoryStream();
                             twoPhaseSigner.SignCMSContainerWithBaselineTProfile(
                                 externalSignature,
-                                preparedReader,
-                                finalOutputStream,
+                                tReader,
+                                tOutputStream,
                                 fieldName,
                                 cmsContainer);
+                            signedPdfBytes = tOutputStream.ToArray();
+                            profileUsed = "T";
                         }
-                        else
-                        {
-                            twoPhaseSigner.SignCMSContainerWithBaselineBProfile(
-                                externalSignature,
-                                preparedReader,
-                                finalOutputStream,
-                                fieldName,
-                                cmsContainer);
-                        }
-
-                        signedPdfBytes = finalOutputStream.ToArray();
+                    }
+                    else if (timestampApplied)
+                    {
+                        using var tReader = new PdfReader(new MemoryStream(preparedPdfBytes));
+                        using var tOutputStream = new MemoryStream();
+                        twoPhaseSigner.SignCMSContainerWithBaselineTProfile(
+                            externalSignature,
+                            tReader,
+                            tOutputStream,
+                            fieldName,
+                            cmsContainer);
+                        signedPdfBytes = tOutputStream.ToArray();
+                        profileUsed = "T";
+                    }
+                    else
+                    {
+                        using var bReader = new PdfReader(new MemoryStream(preparedPdfBytes));
+                        using var bOutputStream = new MemoryStream();
+                        twoPhaseSigner.SignCMSContainerWithBaselineBProfile(
+                            externalSignature,
+                            bReader,
+                            bOutputStream,
+                            fieldName,
+                            cmsContainer);
+                        signedPdfBytes = bOutputStream.ToArray();
+                        profileUsed = "B";
                     }
 
                     string outputPath = Path.Combine(workDir, BuildSignedPdfFileName(options.FileName));
                     File.WriteAllBytes(outputPath, signedPdfBytes);
 
                     _logger.LogInformation(
-                        "PDF imzalama başarılı. Dosya={Path}, Slot={Slot}, Signer={Signer}, Timestamp={Timestamp}",
-                        outputPath, slotIdx, signerName, timestampApplied);
+                        "PDF imzalama başarılı. Dosya={Path}, Slot={Slot}, Signer={Signer}, Timestamp={Timestamp}, PAdESProfile={Profile}",
+                        outputPath, slotIdx, signerName, timestampApplied, profileUsed);
 
                     return (signedPdfBytes, outputPath, signerName, timestampApplied);
                 }
@@ -576,8 +754,9 @@ namespace docsigner_ilter.Services
                     {
                         try
                         {
-                            var cert = GetSigningCertificate(session);
-                            var key = GetPrivateKey(session);
+                            var signingMaterial = GetSigningMaterial(session);
+                            var cert = signingMaterial.certificate;
+                            var key = signingMaterial.privateKey;
                             var mech = session.Factories.MechanismFactory.Create(CKM.CKM_RSA_PKCS);
 
                             string signedXml = CreateFinalMedulaXadesBes(xmlContent, cert, session, key, mech);
@@ -652,31 +831,427 @@ namespace docsigner_ilter.Services
             }
         }
 
-        private X509Certificate2 GetSigningCertificate(ISession s)
+        private (X509Certificate2 certificate, IObjectHandle privateKey, List<X509Certificate2> certificates) GetSigningMaterial(ISession session)
         {
-            var attrs = new List<IObjectAttribute>
+            var certTemplate = new List<IObjectAttribute>
             {
-                s.Factories.ObjectAttributeFactory.Create(CKA.CKA_CLASS, CKO.CKO_CERTIFICATE),
-                s.Factories.ObjectAttributeFactory.Create(CKA.CKA_CERTIFICATE_TYPE, CKC.CKC_X_509)
+                session.Factories.ObjectAttributeFactory.Create(CKA.CKA_CLASS, CKO.CKO_CERTIFICATE),
+                session.Factories.ObjectAttributeFactory.Create(CKA.CKA_CERTIFICATE_TYPE, CKC.CKC_X_509)
             };
-            var objs = s.FindAllObjects(attrs);
-            if (objs.Count == 0)
-                throw new Exception("Sertifika yok");
-            var data = s.GetAttributeValue(objs[0], new List<CKA> { CKA.CKA_VALUE })[0].GetValueAsByteArray();
-            return new X509Certificate2(data);
+            var certObjects = session.FindAllObjects(certTemplate);
+            if (certObjects.Count == 0)
+                throw new Exception("İmzalama sertifikası bulunamadı.");
+
+            var keyTemplate = new List<IObjectAttribute>
+            {
+                session.Factories.ObjectAttributeFactory.Create(CKA.CKA_CLASS, CKO.CKO_PRIVATE_KEY),
+                session.Factories.ObjectAttributeFactory.Create(CKA.CKA_KEY_TYPE, CKK.CKK_RSA)
+            };
+            var keyObjects = session.FindAllObjects(keyTemplate);
+            if (keyObjects.Count == 0)
+                throw new Exception("İmzalama private key bulunamadı.");
+
+            var tokenCertificates = new List<X509Certificate2>();
+
+            var keyById = new Dictionary<string, IObjectHandle>(StringComparer.OrdinalIgnoreCase);
+            foreach (var keyObject in keyObjects)
+            {
+                var keyIdAttr = session.GetAttributeValue(keyObject, new List<CKA> { CKA.CKA_ID })[0];
+                byte[] keyIdBytes = keyIdAttr.GetValueAsByteArray() ?? Array.Empty<byte>();
+                string keyIdHex = Convert.ToHexString(keyIdBytes);
+                if (string.IsNullOrWhiteSpace(keyIdHex))
+                    continue;
+
+                if (!keyById.ContainsKey(keyIdHex))
+                    keyById[keyIdHex] = keyObject;
+            }
+
+            X509Certificate2? bestCert = null;
+            IObjectHandle? bestKey = null;
+            int bestScore = int.MinValue;
+
+            foreach (var certObject in certObjects)
+            {
+                var attrs = session.GetAttributeValue(certObject, new List<CKA> { CKA.CKA_VALUE, CKA.CKA_ID });
+                byte[] certBytes = attrs[0].GetValueAsByteArray() ?? Array.Empty<byte>();
+                if (certBytes.Length == 0)
+                    continue;
+
+                byte[] certIdBytes = attrs[1].GetValueAsByteArray() ?? Array.Empty<byte>();
+                string certIdHex = Convert.ToHexString(certIdBytes);
+
+                var cert = new X509Certificate2(certBytes);
+                AddUniqueCertificate(tokenCertificates, cert);
+                IObjectHandle? matchedKey = null;
+                if (!string.IsNullOrWhiteSpace(certIdHex) && keyById.TryGetValue(certIdHex, out var byId))
+                {
+                    matchedKey = byId;
+                }
+                else if (keyObjects.Count == 1)
+                {
+                    matchedKey = keyObjects[0];
+                }
+
+                if (matchedKey == null)
+                    continue;
+
+                int score = ScoreCertificateForSigning(cert);
+                if (score <= bestScore)
+                    continue;
+
+                bestCert = cert;
+                bestKey = matchedKey;
+                bestScore = score;
+            }
+
+            if (bestCert != null && bestKey != null)
+            {
+                _logger.LogInformation("İmzalama sertifikası seçildi. Subject={Subject}, Score={Score}, Serial={Serial}",
+                    bestCert.Subject, bestScore, bestCert.SerialNumber);
+                return (bestCert, bestKey, tokenCertificates);
+            }
+
+            // Son çare: eski davranış (ilk sertifika + ilk private key)
+            _logger.LogWarning("Uygun eşleşmiş imza sertifikası bulunamadı, fallback kullanılıyor.");
+            byte[] fallbackCertData = session.GetAttributeValue(certObjects[0], new List<CKA> { CKA.CKA_VALUE })[0].GetValueAsByteArray() ?? Array.Empty<byte>();
+            var fallbackCert = new X509Certificate2(fallbackCertData);
+            AddUniqueCertificate(tokenCertificates, fallbackCert);
+            return (fallbackCert, keyObjects[0], tokenCertificates);
         }
 
-        private IObjectHandle GetPrivateKey(ISession s)
+        private static int ScoreCertificateForSigning(X509Certificate2 cert)
         {
-            var attrs = new List<IObjectAttribute>
+            int score = 0;
+            DateTime utcNow = DateTime.UtcNow;
+
+            if (utcNow >= cert.NotBefore.ToUniversalTime() && utcNow <= cert.NotAfter.ToUniversalTime())
+                score += 50;
+            else
+                score -= 200;
+
+            var keyUsage = cert.Extensions.OfType<X509KeyUsageExtension>().FirstOrDefault();
+            if (keyUsage != null)
             {
-                s.Factories.ObjectAttributeFactory.Create(CKA.CKA_CLASS, CKO.CKO_PRIVATE_KEY),
-                s.Factories.ObjectAttributeFactory.Create(CKA.CKA_KEY_TYPE, CKK.CKK_RSA)
+                if ((keyUsage.KeyUsages & X509KeyUsageFlags.DigitalSignature) != 0)
+                    score += 60;
+
+                if ((keyUsage.KeyUsages & X509KeyUsageFlags.NonRepudiation) != 0)
+                    score += 80;
+
+                if ((keyUsage.KeyUsages & X509KeyUsageFlags.KeyEncipherment) != 0)
+                    score -= 5;
+            }
+            else
+            {
+                score += 5;
+            }
+
+            // QCStatements (qualified cert göstergesi)
+            if (cert.Extensions["1.3.6.1.5.5.7.1.3"] != null)
+                score += 20;
+
+            // Certificate Policies varsa hafif pozitif.
+            if (cert.Extensions["2.5.29.32"] != null)
+                score += 5;
+
+            return score;
+        }
+
+        private X509Certificate2 GetBestSigningCertificateFromSession(ISession session)
+        {
+            var certTemplate = new List<IObjectAttribute>
+            {
+                session.Factories.ObjectAttributeFactory.Create(CKA.CKA_CLASS, CKO.CKO_CERTIFICATE),
+                session.Factories.ObjectAttributeFactory.Create(CKA.CKA_CERTIFICATE_TYPE, CKC.CKC_X_509)
             };
-            var objs = s.FindAllObjects(attrs);
-            if (objs.Count == 0)
-                throw new Exception("Private key yok");
-            return objs[0];
+
+            var certObjects = session.FindAllObjects(certTemplate);
+            if (certObjects.Count == 0)
+                throw new Exception("Sertifika bulunamadı.");
+
+            X509Certificate2? best = null;
+            int bestScore = int.MinValue;
+
+            foreach (var certObject in certObjects)
+            {
+                byte[] certBytes = session.GetAttributeValue(certObject, new List<CKA> { CKA.CKA_VALUE })[0].GetValueAsByteArray() ?? Array.Empty<byte>();
+                if (certBytes.Length == 0)
+                    continue;
+
+                var cert = new X509Certificate2(certBytes);
+                int score = ScoreCertificateForSigning(cert);
+                if (score <= bestScore)
+                    continue;
+
+                best = cert;
+                bestScore = score;
+            }
+
+            if (best == null)
+                throw new Exception("İmzalama sertifikası seçilemedi.");
+
+            return best;
+        }
+
+        private List<X509Certificate2> BuildTrustChainCandidates(
+            X509Certificate2 signerCert,
+            SignerTrustSetupResult result,
+            IReadOnlyCollection<X509Certificate2>? extraCandidates = null)
+        {
+            var chainCertificates = new List<X509Certificate2> { new X509Certificate2(signerCert.RawData) };
+            if (extraCandidates != null)
+            {
+                foreach (var candidate in extraCandidates)
+                    AddUniqueCertificate(chainCertificates, candidate);
+            }
+
+            using (var chain = new X509Chain())
+            {
+                chain.ChainPolicy.RevocationMode = X509RevocationMode.NoCheck;
+                chain.ChainPolicy.RevocationFlag = X509RevocationFlag.ExcludeRoot;
+                chain.ChainPolicy.VerificationFlags = X509VerificationFlags.AllowUnknownCertificateAuthority;
+                chain.ChainPolicy.UrlRetrievalTimeout = TimeSpan.FromSeconds(5);
+                chain.ChainPolicy.DisableCertificateDownloads = false;
+                if (extraCandidates != null)
+                {
+                    foreach (var extra in extraCandidates)
+                        chain.ChainPolicy.ExtraStore.Add(extra);
+                }
+
+                chain.Build(signerCert);
+                foreach (X509ChainElement element in chain.ChainElements)
+                    AddUniqueCertificate(chainCertificates, element.Certificate);
+            }
+
+            for (int depth = 0; depth < 6; depth++)
+            {
+                bool addedAny = false;
+                var snapshot = chainCertificates.ToList();
+
+                foreach (var item in snapshot)
+                {
+                    if (DistinguishedNameEquals(item.Subject, item.Issuer))
+                        continue;
+
+                    bool hasIssuer = chainCertificates.Any(x => DistinguishedNameEquals(x.Subject, item.Issuer));
+                    if (hasIssuer)
+                        continue;
+
+                    foreach (var issuerCert in FindIssuerCertificatesInStores(item))
+                    {
+                        if (AddUniqueCertificate(chainCertificates, issuerCert))
+                            addedAny = true;
+                    }
+
+                    foreach (var issuerCert in FindIssuerCertificatesFromAia(item, result.Warnings))
+                    {
+                        if (AddUniqueCertificate(chainCertificates, issuerCert))
+                            addedAny = true;
+                    }
+                }
+
+                if (!addedAny)
+                    break;
+            }
+
+            return chainCertificates;
+        }
+
+        private void InstallChainCertificatesToStores(
+            List<X509Certificate2> chainCertificates,
+            X509Certificate2 signerCert,
+            SignerTrustSetupResult result,
+            bool tryLocalMachine)
+        {
+            InstallChainCertificatesToStoreLocation(chainCertificates, signerCert, result, StoreLocation.CurrentUser, "CurrentUser");
+
+            if (!tryLocalMachine)
+                return;
+
+            bool isAdmin = false;
+            try
+            {
+                var identity = WindowsIdentity.GetCurrent();
+                var principal = identity == null ? null : new WindowsPrincipal(identity);
+                isAdmin = principal?.IsInRole(WindowsBuiltInRole.Administrator) == true;
+            }
+            catch
+            {
+                // Admin kontrolü yapılamazsa yine deneyeceğiz.
+            }
+
+            if (!isAdmin)
+            {
+                bool alreadyInstalled = AreChainCertificatesPresentInStoreLocation(
+                    chainCertificates,
+                    signerCert,
+                    StoreLocation.LocalMachine);
+
+                if (!alreadyInstalled)
+                    result.Warnings.Add("LocalMachine store kurulumu atlandı (yönetici yetkisi yok).");
+
+                return;
+            }
+
+            InstallChainCertificatesToStoreLocation(chainCertificates, signerCert, result, StoreLocation.LocalMachine, "LocalMachine");
+        }
+
+        private bool AreChainCertificatesPresentInStoreLocation(
+            List<X509Certificate2> chainCertificates,
+            X509Certificate2 signerCert,
+            StoreLocation location)
+        {
+            foreach (var cert in chainCertificates)
+            {
+                if (string.Equals(cert.Thumbprint, signerCert.Thumbprint, StringComparison.OrdinalIgnoreCase))
+                    continue;
+
+                bool isRoot = DistinguishedNameEquals(cert.Subject, cert.Issuer);
+                StoreName storeName = isRoot ? StoreName.Root : StoreName.CertificateAuthority;
+
+                try
+                {
+                    using var store = new X509Store(storeName, location);
+                    store.Open(OpenFlags.ReadOnly | OpenFlags.OpenExistingOnly);
+                    bool exists = !string.IsNullOrWhiteSpace(cert.Thumbprint) &&
+                        store.Certificates.Find(X509FindType.FindByThumbprint, cert.Thumbprint, false).Count > 0;
+
+                    if (!exists)
+                        return false;
+                }
+                catch
+                {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        private void InstallChainCertificatesToStoreLocation(
+            List<X509Certificate2> chainCertificates,
+            X509Certificate2 signerCert,
+            SignerTrustSetupResult result,
+            StoreLocation location,
+            string locationName)
+        {
+            foreach (var cert in chainCertificates)
+            {
+                if (string.Equals(cert.Thumbprint, signerCert.Thumbprint, StringComparison.OrdinalIgnoreCase))
+                    continue;
+
+                bool isRoot = DistinguishedNameEquals(cert.Subject, cert.Issuer);
+                StoreName storeName = isRoot ? StoreName.Root : StoreName.CertificateAuthority;
+
+                using var store = new X509Store(storeName, location);
+                try
+                {
+                    store.Open(OpenFlags.ReadWrite);
+                }
+                catch (Exception openEx)
+                {
+                    result.Warnings.Add($"{locationName}/{storeName} açılamadı: {openEx.Message}");
+                    continue;
+                }
+
+                bool exists = !string.IsNullOrWhiteSpace(cert.Thumbprint) &&
+                    store.Certificates.Find(X509FindType.FindByThumbprint, cert.Thumbprint, false).Count > 0;
+
+                if (exists)
+                {
+                    if (location == StoreLocation.CurrentUser)
+                    {
+                        if (isRoot) result.ExistingRootCount++;
+                        else result.ExistingIntermediateCount++;
+                    }
+                    continue;
+                }
+
+                try
+                {
+                    store.Add(new X509Certificate2(cert.RawData));
+                    if (location == StoreLocation.CurrentUser)
+                    {
+                        if (isRoot) result.AddedRootCount++;
+                        else result.AddedIntermediateCount++;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    result.Warnings.Add($"{locationName}/{storeName} {cert.Subject}: {ex.Message}");
+                }
+            }
+        }
+
+        private static int ReadDword(RegistryKey key, string valueName, int defaultValue = 0)
+        {
+            object? value = key.GetValue(valueName);
+            if (value == null)
+                return defaultValue;
+
+            try
+            {
+                return Convert.ToInt32(value, CultureInfo.InvariantCulture);
+            }
+            catch
+            {
+                return defaultValue;
+            }
+        }
+
+        private void EnsureAcrobatWindowsStoreIntegration(SignerTrustSetupResult result)
+        {
+            string[] productRoots =
+            {
+                @"SOFTWARE\Adobe\Adobe Acrobat\DC\Security",
+                @"SOFTWARE\Adobe\Acrobat Reader\DC\Security"
+            };
+
+            const int windowsStoreTrustMask = 0x62; // Adobe PrefRef: Windows store + trusted roots.
+            const int importEnable = 1;
+
+            foreach (string productRoot in productRoots)
+            {
+                try
+                {
+                    using var securityKey = Registry.CurrentUser.CreateSubKey(productRoot, writable: true);
+                    if (securityKey == null)
+                    {
+                        result.Warnings.Add($"Registry açılamadı: HKCU\\{productRoot}");
+                        continue;
+                    }
+
+                    using (var mscapiKey = securityKey.CreateSubKey(@"cASPKI\cMSCAPI_DirectoryProvider", writable: true))
+                    {
+                        if (mscapiKey == null)
+                        {
+                            result.Warnings.Add($"Registry açılamadı: HKCU\\{productRoot}\\cASPKI\\cMSCAPI_DirectoryProvider");
+                        }
+                        else if (ReadDword(mscapiKey, "iMSStoreTrusted") != windowsStoreTrustMask)
+                        {
+                            mscapiKey.SetValue("iMSStoreTrusted", windowsStoreTrustMask, RegistryValueKind.DWord);
+                            result.AcrobatRegistryValuesWritten++;
+                        }
+                    }
+
+                    using (var ppkKey = securityKey.CreateSubKey("PPKHandler", writable: true))
+                    {
+                        if (ppkKey == null)
+                        {
+                            result.Warnings.Add($"Registry açılamadı: HKCU\\{productRoot}\\PPKHandler");
+                        }
+                        else if (ReadDword(ppkKey, "bCertStoreImportEnable") != importEnable)
+                        {
+                            ppkKey.SetValue("bCertStoreImportEnable", importEnable, RegistryValueKind.DWord);
+                            result.AcrobatRegistryValuesWritten++;
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    result.Warnings.Add($"Acrobat registry ayarı yazılamadı ({productRoot}): {ex.Message}");
+                }
+            }
         }
 
         // (Aşağısı senin mevcut CreateFinalMedulaXadesBes + canonicalize + DigestInfoSHA256 aynen)
@@ -989,11 +1564,367 @@ namespace docsigner_ilter.Services
             return new SignaturePlacement(pageNumber, new PdfRectangle(x, y, width, height));
         }
 
-        private static IX509Certificate[] BuildCertificateChain(X509Certificate2 cert)
+        private static IX509Certificate[] BuildCertificateChain(
+            X509Certificate2 cert,
+            IReadOnlyCollection<X509Certificate2>? extraCertificates = null)
         {
+            // Bazı doğrulayıcılar (özellikle Adobe/WebView2) ara sertifika gömülü değilse
+            // zinciri kuramayabiliyor. Bu yüzden mümkün olduğunda tam zinciri imzaya koyuyoruz.
+            var sourceCertificates = new List<X509Certificate2> { cert };
+            if (extraCertificates != null)
+            {
+                foreach (var item in extraCertificates)
+                    AddUniqueCertificate(sourceCertificates, item);
+            }
+
+            using (var chain = new X509Chain())
+            {
+                chain.ChainPolicy.RevocationMode = X509RevocationMode.NoCheck;
+                chain.ChainPolicy.RevocationFlag = X509RevocationFlag.ExcludeRoot;
+                chain.ChainPolicy.VerificationFlags = X509VerificationFlags.AllowUnknownCertificateAuthority;
+                chain.ChainPolicy.UrlRetrievalTimeout = TimeSpan.FromSeconds(5);
+                chain.ChainPolicy.DisableCertificateDownloads = false;
+                if (extraCertificates != null)
+                {
+                    foreach (var extra in extraCertificates)
+                        chain.ChainPolicy.ExtraStore.Add(extra);
+                }
+
+                chain.Build(cert);
+                foreach (X509ChainElement element in chain.ChainElements)
+                {
+                    AddUniqueCertificate(sourceCertificates, element.Certificate);
+                }
+            }
+
+            // Chain.Build tüm ara sertifikaları bulamayabilir; store'dan issuer takviyesi yap.
+            for (int depth = 0; depth < 5; depth++)
+            {
+                bool addedAny = false;
+                var snapshot = sourceCertificates.ToList();
+
+                foreach (var item in snapshot)
+                {
+                    if (DistinguishedNameEquals(item.Subject, item.Issuer))
+                        continue; // self-signed/root
+
+                    bool hasIssuerAlready = sourceCertificates.Any(x => DistinguishedNameEquals(x.Subject, item.Issuer));
+                    if (hasIssuerAlready)
+                        continue;
+
+                    foreach (var issuerCert in FindIssuerCertificatesInStores(item))
+                    {
+                        if (AddUniqueCertificate(sourceCertificates, issuerCert))
+                            addedAny = true;
+                    }
+
+                    foreach (var issuerCert in FindIssuerCertificatesFromAia(item))
+                    {
+                        if (AddUniqueCertificate(sourceCertificates, issuerCert))
+                            addedAny = true;
+                    }
+                }
+
+                if (!addedAny)
+                    break;
+            }
+
             var factory = BouncyCastleFactoryCreator.GetFactory();
-            using var certStream = new MemoryStream(cert.RawData);
-            return new[] { factory.CreateX509Certificate(certStream) };
+            var unique = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var chainCertificates = new List<IX509Certificate>();
+
+            foreach (var item in sourceCertificates)
+            {
+                string key = item.Thumbprint ?? Convert.ToBase64String(item.RawData);
+                if (!unique.Add(key))
+                    continue;
+
+                using var certStream = new MemoryStream(item.RawData);
+                chainCertificates.Add(factory.CreateX509Certificate(certStream));
+            }
+
+            return chainCertificates.ToArray();
+        }
+
+        private static List<X509Certificate2> GetAllCertificatesFromSession(ISession session)
+        {
+            var certs = new List<X509Certificate2>();
+            var template = new List<IObjectAttribute>
+            {
+                session.Factories.ObjectAttributeFactory.Create(CKA.CKA_CLASS, CKO.CKO_CERTIFICATE),
+                session.Factories.ObjectAttributeFactory.Create(CKA.CKA_CERTIFICATE_TYPE, CKC.CKC_X_509)
+            };
+
+            foreach (var certObject in session.FindAllObjects(template))
+            {
+                var value = session.GetAttributeValue(certObject, new List<CKA> { CKA.CKA_VALUE })[0];
+                byte[] certBytes = value.GetValueAsByteArray() ?? Array.Empty<byte>();
+                if (certBytes.Length == 0)
+                    continue;
+
+                try
+                {
+                    AddUniqueCertificate(certs, new X509Certificate2(certBytes));
+                }
+                catch
+                {
+                    // Token içindeki bozuk/uyumsuz sertifika obje kayıtlarını atla.
+                }
+            }
+
+            return certs;
+        }
+
+        private static bool AddUniqueCertificate(List<X509Certificate2> target, X509Certificate2 candidate)
+        {
+            string thumbprint = candidate.Thumbprint ?? string.Empty;
+            bool exists = !string.IsNullOrWhiteSpace(thumbprint) &&
+                          target.Any(x => string.Equals(x.Thumbprint, thumbprint, StringComparison.OrdinalIgnoreCase));
+            if (exists)
+                return false;
+
+            target.Add(new X509Certificate2(candidate.RawData));
+            return true;
+        }
+
+        private static bool DistinguishedNameEquals(string? left, string? right)
+        {
+            if (string.IsNullOrWhiteSpace(left) || string.IsNullOrWhiteSpace(right))
+                return false;
+
+            static string Normalize(string dn) => Regex.Replace(dn, @"\s+", string.Empty).Trim();
+            return string.Equals(Normalize(left), Normalize(right), StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static IReadOnlyList<X509Certificate2> FindIssuerCertificatesInStores(X509Certificate2 childCert)
+        {
+            string issuerDn = childCert.Issuer;
+            var storeLocations = new[] { StoreLocation.CurrentUser, StoreLocation.LocalMachine };
+            var storeNames = new[] { StoreName.CertificateAuthority, StoreName.Root };
+            var results = new List<X509Certificate2>();
+            var unique = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            byte[]? authorityKeyIdentifier = TryGetAuthorityKeyIdentifier(childCert);
+
+            foreach (var location in storeLocations)
+            {
+                foreach (var storeName in storeNames)
+                {
+                    X509Store? store = null;
+                    try
+                    {
+                        store = new X509Store(storeName, location);
+                        store.Open(OpenFlags.ReadOnly | OpenFlags.OpenExistingOnly);
+
+                        var exactMatches = store.Certificates.Find(
+                            X509FindType.FindBySubjectDistinguishedName,
+                            issuerDn,
+                            validOnly: false);
+
+                        foreach (var cert in exactMatches.OfType<X509Certificate2>())
+                        {
+                            if (!IsIssuerCandidate(childCert, cert, authorityKeyIdentifier))
+                                continue;
+
+                            string key = cert.Thumbprint ?? Convert.ToBase64String(cert.RawData);
+                            if (unique.Add(key))
+                                results.Add(new X509Certificate2(cert.RawData));
+                        }
+
+                        if (exactMatches.Count == 0)
+                        {
+                            foreach (var cert in store.Certificates.OfType<X509Certificate2>())
+                            {
+                                if (IsIssuerCandidate(childCert, cert, authorityKeyIdentifier))
+                                {
+                                    string key = cert.Thumbprint ?? Convert.ToBase64String(cert.RawData);
+                                    if (unique.Add(key))
+                                        results.Add(new X509Certificate2(cert.RawData));
+                                }
+                            }
+                        }
+                    }
+                    catch
+                    {
+                        // Store erişimi her makinede garanti değil; atlayıp devam ediyoruz.
+                    }
+                    finally
+                    {
+                        store?.Close();
+                    }
+                }
+            }
+
+            return results;
+        }
+
+        private static IReadOnlyList<X509Certificate2> FindIssuerCertificatesFromAia(
+            X509Certificate2 childCert,
+            List<string>? warnings = null)
+        {
+            var results = new List<X509Certificate2>();
+            var unique = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            byte[]? authorityKeyIdentifier = TryGetAuthorityKeyIdentifier(childCert);
+            var urls = ExtractCaIssuerUrls(childCert);
+
+            foreach (var url in urls)
+            {
+                try
+                {
+                    var payload = _httpClient.GetByteArrayAsync(url).GetAwaiter().GetResult();
+                    foreach (var cert in ParseCertificates(payload))
+                    {
+                        if (!IsIssuerCandidate(childCert, cert, authorityKeyIdentifier))
+                            continue;
+
+                        string key = cert.Thumbprint ?? Convert.ToBase64String(cert.RawData);
+                        if (unique.Add(key))
+                            results.Add(new X509Certificate2(cert.RawData));
+                    }
+                }
+                catch (Exception ex)
+                {
+                    warnings?.Add($"AIA indirilemedi ({url}): {ex.Message}");
+                }
+            }
+
+            return results;
+        }
+
+        private static IReadOnlyList<string> ExtractCaIssuerUrls(X509Certificate2 cert)
+        {
+            var urls = new List<string>();
+            var extension = cert.Extensions["1.3.6.1.5.5.7.1.1"]; // Authority Information Access
+            if (extension == null)
+                return urls;
+
+            try
+            {
+                var reader = new AsnReader(extension.RawData, AsnEncodingRules.DER);
+                var sequence = reader.ReadSequence();
+
+                while (sequence.HasData)
+                {
+                    var accessDescription = sequence.ReadSequence();
+                    string accessMethod = accessDescription.ReadObjectIdentifier();
+
+                    if (accessMethod == "1.3.6.1.5.5.7.48.2" && accessDescription.HasData)
+                    {
+                        Asn1Tag tag = accessDescription.PeekTag();
+                        if (tag.TagClass == TagClass.ContextSpecific && tag.TagValue == 6)
+                        {
+                            string url = accessDescription.ReadCharacterString(
+                                UniversalTagNumber.IA5String,
+                                new Asn1Tag(TagClass.ContextSpecific, 6));
+
+                            if (!string.IsNullOrWhiteSpace(url) &&
+                                (url.StartsWith("http://", StringComparison.OrdinalIgnoreCase) ||
+                                 url.StartsWith("https://", StringComparison.OrdinalIgnoreCase)))
+                            {
+                                urls.Add(url.Trim());
+                            }
+                        }
+                    }
+                }
+            }
+            catch
+            {
+                // AIA parse edilemezse sessizce geç.
+            }
+
+            return urls;
+        }
+
+        private static IReadOnlyList<X509Certificate2> ParseCertificates(byte[] payload)
+        {
+            var parsed = new List<X509Certificate2>();
+
+            try
+            {
+                var collection = new X509Certificate2Collection();
+                collection.Import(payload);
+                parsed.AddRange(collection.Cast<X509Certificate2>().Select(x => new X509Certificate2(x.RawData)));
+                if (parsed.Count > 0)
+                    return parsed;
+            }
+            catch
+            {
+                // Aşağıdaki fallback denenecek.
+            }
+
+            try
+            {
+                var single = new X509Certificate2(payload);
+                parsed.Add(new X509Certificate2(single.RawData));
+            }
+            catch
+            {
+                // Desteklenmeyen format olabilir.
+            }
+
+            return parsed;
+        }
+
+        private static bool IsIssuerCandidate(X509Certificate2 childCert, X509Certificate2 issuerCert, byte[]? authorityKeyIdentifier)
+        {
+            if (!DistinguishedNameEquals(issuerCert.Subject, childCert.Issuer))
+                return false;
+
+            if (authorityKeyIdentifier == null || authorityKeyIdentifier.Length == 0)
+                return true;
+
+            byte[]? subjectKeyIdentifier = TryGetSubjectKeyIdentifier(issuerCert);
+            if (subjectKeyIdentifier == null || subjectKeyIdentifier.Length == 0)
+                return true;
+
+            return authorityKeyIdentifier.AsSpan().SequenceEqual(subjectKeyIdentifier);
+        }
+
+        private static byte[]? TryGetAuthorityKeyIdentifier(X509Certificate2 certificate)
+        {
+            var extension = certificate.Extensions["2.5.29.35"];
+            if (extension == null)
+                return null;
+
+            try
+            {
+                var reader = new AsnReader(extension.RawData, AsnEncodingRules.DER);
+                var sequence = reader.ReadSequence();
+
+                while (sequence.HasData)
+                {
+                    Asn1Tag tag = sequence.PeekTag();
+                    if (tag.TagClass == TagClass.ContextSpecific && tag.TagValue == 0)
+                        return sequence.ReadOctetString(new Asn1Tag(TagClass.ContextSpecific, 0));
+
+                    sequence.ReadEncodedValue();
+                }
+            }
+            catch
+            {
+                // Bazı kart sertifikalarında AKI parse edilemeyebilir.
+            }
+
+            return null;
+        }
+
+        private static byte[]? TryGetSubjectKeyIdentifier(X509Certificate2 certificate)
+        {
+            var extension = certificate.Extensions.OfType<X509SubjectKeyIdentifierExtension>().FirstOrDefault();
+            if (extension == null || string.IsNullOrWhiteSpace(extension.SubjectKeyIdentifier))
+                return null;
+
+            string hex = Regex.Replace(extension.SubjectKeyIdentifier, @"[^0-9A-Fa-f]", string.Empty);
+            if (hex.Length == 0 || (hex.Length % 2) != 0)
+                return null;
+
+            try
+            {
+                return Convert.FromHexString(hex);
+            }
+            catch
+            {
+                return null;
+            }
         }
 
         private static string ResolveSignerName(X509Certificate2 cert, string? preferred)

@@ -71,6 +71,9 @@ namespace docsigner_ilter
         public string? Reason { get; set; } = null;
         public string? Location { get; set; } = null;
         public bool? AddTimestamp { get; set; } = null;
+        public bool? AutoSetupTrustChain { get; set; } = null;
+        public bool? TryInstallTrustToLocalMachine { get; set; } = null;
+        public bool? ConfigureAcrobatWindowsStoreIntegration { get; set; } = null;
         public string? FileName { get; set; } = null;
     }
 
@@ -145,7 +148,7 @@ namespace docsigner_ilter
         private static bool ShouldSkipSingleInstanceForDebug()
         {
 #if DEBUG
-            return Debugger.IsAttached;
+            return true;
 #else
             return false;
 #endif
@@ -198,11 +201,28 @@ namespace docsigner_ilter
             }
         }
 
+        private static string ResolveAppSettingsPath()
+        {
+            string baseDirPath = Path.Combine(AppContext.BaseDirectory, "appsettings.json");
+            if (System.IO.File.Exists(baseDirPath))
+                return baseDirPath;
+
+            string localPath = Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "appsettings.json");
+            localPath = Path.GetFullPath(localPath);
+            if (System.IO.File.Exists(localPath))
+                return localPath;
+
+            return "appsettings.json";
+        }
+
         [STAThread]
         static void Main(string[] args)
         {
             if (!ShouldSkipSingleInstanceForDebug() && !EnsureSingle())
+            {
+                Console.WriteLine("docsigner-ILTER zaten çalışıyor. Mevcut örnek kullanılacak.");
                 return;
+            }
 
             RegisterGlobalExceptionHandlers();
 
@@ -225,7 +245,7 @@ namespace docsigner_ilter
 
             var builder = WebApplication.CreateBuilder(args);
 
-            builder.Configuration.AddJsonFile("appsettings.json", optional: false, reloadOnChange: true);
+            builder.Configuration.AddJsonFile(ResolveAppSettingsPath(), optional: false, reloadOnChange: true);
             builder.Host.UseSerilog();
 
             // ✅ ReceptServiceApp
@@ -354,6 +374,11 @@ namespace docsigner_ilter
                         return Results.BadRequest("Gönderilen içerik geçerli bir PDF görünmüyor.");
 
                     bool enableTimestamp = request.AddTimestamp ?? config.GetValue("PdfSignature:EnableTimestamp", false);
+                    bool autoSetupTrustChain = request.AutoSetupTrustChain ?? config.GetValue("PdfSignature:AutoSetupTrustChain", true);
+                    bool tryInstallTrustToLocalMachine = request.TryInstallTrustToLocalMachine ?? config.GetValue("PdfSignature:TryInstallTrustToLocalMachine", true);
+                    bool configureAcrobatWindowsStoreIntegration =
+                        request.ConfigureAcrobatWindowsStoreIntegration ??
+                        config.GetValue("PdfSignature:ConfigureAcrobatWindowsStoreIntegration", true);
 
                     var options = new ReceptServiceApp.PdfSignatureOptions
                     {
@@ -375,7 +400,10 @@ namespace docsigner_ilter
                         EnableTimestamp = enableTimestamp,
                         TsaUrl = config.GetValue<string>("PdfSignature:TsaUrl"),
                         TsaUsername = config.GetValue<string>("PdfSignature:TsaUsername"),
-                        TsaPassword = config.GetValue<string>("PdfSignature:TsaPassword")
+                        TsaPassword = config.GetValue<string>("PdfSignature:TsaPassword"),
+                        AutoSetupTrustChain = autoSetupTrustChain,
+                        TryInstallTrustToLocalMachine = tryInstallTrustToLocalMachine,
+                        ConfigureAcrobatWindowsStoreIntegration = configureAcrobatWindowsStoreIntegration
                     };
 
                     var (signedPdf, filePath, signerName, timestampApplied) = await service.SignPdf(

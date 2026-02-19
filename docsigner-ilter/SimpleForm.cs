@@ -77,6 +77,7 @@ namespace docsigner_ilter
         private bool _isTrustReadyForSelectedDevice;
         private string? _trustReadyDeviceKey;
         private int _trustCheckVersion;
+        private int _previewValidationVersion;
         public SimpleForm()
         {
             InitializeComponent();
@@ -688,7 +689,7 @@ namespace docsigner_ilter
             labelPreviewInfo = new Label
             {
                 Dock = DockStyle.Top,
-                Height = 50,
+                Height = 72,
                 Font = new Font("Segoe UI", 8.5f),
                 ForeColor = Color.FromArgb(80, 80, 80),
                 Text = "Seçili dosya bilgisi burada görünür.",
@@ -1740,10 +1741,12 @@ namespace docsigner_ilter
                 var info = new FileInfo(selectedPath);
                 if (string.Equals(info.Extension, ".pdf", StringComparison.OrdinalIgnoreCase))
                 {
-                    labelPreviewHeader.Text = info.Name;
-                    labelPreviewInfo.Text =
+                    string baseInfo =
                         $"{info.FullName}{Environment.NewLine}" +
                         $"Boyut: {FormatFileSize(info.Length)} | Son Değişim: {info.LastWriteTime:dd.MM.yyyy HH:mm:ss} | PDF belgesi";
+
+                    labelPreviewHeader.Text = info.Name;
+                    labelPreviewInfo.Text = baseInfo + Environment.NewLine + "Uygulama doğrulaması: kontrol ediliyor...";
 
                     bool previewOk = await TryShowPdfPreviewAsync(selectedPath);
                     if (!previewOk)
@@ -1751,8 +1754,11 @@ namespace docsigner_ilter
                         SetTextPreview("PDF önizleme açılamadı. 'Seçileni Aç' ile Acrobat/varsayılan PDF görüntüleyicide açabilirsiniz.");
                     }
 
+                    await UpdatePdfValidationStatusAsync(selectedPath, baseInfo);
                     return;
                 }
+
+                Interlocked.Increment(ref _previewValidationVersion);
 
                 string content = File.ReadAllText(selectedPath);
                 bool clipped = false;
@@ -1777,6 +1783,7 @@ namespace docsigner_ilter
             }
             catch (Exception ex)
             {
+                Interlocked.Increment(ref _previewValidationVersion);
                 labelPreviewHeader.Text = "Önizleme";
                 labelPreviewInfo.Text = $"Dosya okunamadı: {selectedPath}";
                 SetTextPreview(ex.ToString());
@@ -1826,6 +1833,50 @@ namespace docsigner_ilter
             {
                 return false;
             }
+        }
+
+        private async Task UpdatePdfValidationStatusAsync(string pdfPath, string baseInfo)
+        {
+            int version = Interlocked.Increment(ref _previewValidationVersion);
+
+            try
+            {
+                var service = new ReceptServiceApp(new DummyLogger<ReceptServiceApp>());
+                var validation = await Task.Run(() => service.ValidatePdfSignatures(pdfPath));
+
+                if (version != _previewValidationVersion)
+                    return;
+
+                string? stillSelected = GetSelectedSignedFilePath();
+                if (!string.Equals(stillSelected, pdfPath, StringComparison.OrdinalIgnoreCase))
+                    return;
+
+                labelPreviewInfo.Text = baseInfo + Environment.NewLine + BuildPdfValidationSummary(validation);
+            }
+            catch (Exception ex)
+            {
+                if (version != _previewValidationVersion)
+                    return;
+
+                labelPreviewInfo.Text = baseInfo + Environment.NewLine + $"Uygulama doğrulaması: Hata ({ex.Message})";
+            }
+        }
+
+        private static string BuildPdfValidationSummary(ReceptServiceApp.PdfSignatureValidationResult validation)
+        {
+            if (!validation.Success)
+                return $"Uygulama doğrulaması: Başarısız ({validation.Message})";
+
+            if (validation.SignatureCount == 0)
+                return "Uygulama doğrulaması: PDF içinde imza bulunamadı.";
+
+            if (validation.TrustedChainCount == validation.SignatureCount)
+                return $"Uygulama doğrulaması: {validation.TrustedChainCount}/{validation.SignatureCount} imza güvenilir.";
+
+            if (validation.CryptographicallyValidCount == validation.SignatureCount)
+                return $"Uygulama doğrulaması: İmzalar geçerli, zincir güveni eksik ({validation.TrustedChainCount}/{validation.SignatureCount} güvenilir).";
+
+            return $"Uygulama doğrulaması: {validation.CryptographicallyValidCount}/{validation.SignatureCount} imza geçerli, {validation.TrustedChainCount}/{validation.SignatureCount} güvenilir.";
         }
 
         private static string BuildSignatureSummary(string extension, string xmlText)

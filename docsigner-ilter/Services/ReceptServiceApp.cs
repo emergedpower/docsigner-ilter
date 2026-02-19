@@ -200,6 +200,27 @@ namespace docsigner_ilter.Services
             public List<string> Warnings { get; set; } = new List<string>();
         }
 
+        public class PdfSignatureValidationResult
+        {
+            public bool Success { get; set; }
+            public string Message { get; set; } = string.Empty;
+            public int SignatureCount { get; set; }
+            public int CryptographicallyValidCount { get; set; }
+            public int TrustedChainCount { get; set; }
+            public List<PdfSignatureValidationItem> Signatures { get; set; } = new List<PdfSignatureValidationItem>();
+        }
+
+        public class PdfSignatureValidationItem
+        {
+            public string FieldName { get; set; } = string.Empty;
+            public string SignerSubject { get; set; } = string.Empty;
+            public string SignerThumbprint { get; set; } = string.Empty;
+            public bool CoversWholeDocument { get; set; }
+            public bool IntegrityValid { get; set; }
+            public bool TrustedChain { get; set; }
+            public string ChainStatus { get; set; } = string.Empty;
+        }
+
         #region Cihaz Listeleme
         public List<SignatureDeviceDto> GetSignatureDevices()
         {
@@ -701,6 +722,156 @@ namespace docsigner_ilter.Services
             {
                 gate.Release();
             }
+        }
+
+        public PdfSignatureValidationResult ValidatePdfSignatures(string pdfPath)
+        {
+            if (string.IsNullOrWhiteSpace(pdfPath))
+                throw new ArgumentException("PDF yolu boş", nameof(pdfPath));
+
+            if (!File.Exists(pdfPath))
+                throw new FileNotFoundException("PDF dosyası bulunamadı.", pdfPath);
+
+            return ValidatePdfSignatures(File.ReadAllBytes(pdfPath));
+        }
+
+        public PdfSignatureValidationResult ValidatePdfSignatures(byte[] pdfBytes)
+        {
+            var result = new PdfSignatureValidationResult();
+
+            try
+            {
+                if (pdfBytes == null || pdfBytes.Length == 0)
+                {
+                    result.Success = false;
+                    result.Message = "PDF içeriği boş.";
+                    return result;
+                }
+
+                using var reader = new PdfReader(new MemoryStream(pdfBytes));
+                using var pdfDoc = new PdfDocument(reader);
+                var signatureUtil = new SignatureUtil(pdfDoc);
+                var signatureNames = signatureUtil.GetSignatureNames();
+
+                if (signatureNames == null || signatureNames.Count == 0)
+                {
+                    result.Success = true;
+                    result.Message = "PDF içinde imza alanı bulunamadı.";
+                    return result;
+                }
+
+                foreach (var signatureName in signatureNames)
+                {
+                    var item = new PdfSignatureValidationItem
+                    {
+                        FieldName = signatureName,
+                        CoversWholeDocument = signatureUtil.SignatureCoversWholeDocument(signatureName)
+                    };
+
+                    var pkcs7 = signatureUtil.ReadSignatureData(signatureName);
+                    item.IntegrityValid = pkcs7.VerifySignatureIntegrityAndAuthenticity();
+
+                    var signerCert = ToX509Certificate2(pkcs7.GetSigningCertificate());
+                    var embeddedCerts = ToX509Certificates(pkcs7.GetCertificates());
+
+                    if (signerCert != null)
+                    {
+                        item.SignerSubject = signerCert.Subject;
+                        item.SignerThumbprint = signerCert.Thumbprint ?? string.Empty;
+
+                        using var chain = new X509Chain();
+                        chain.ChainPolicy.RevocationMode = X509RevocationMode.NoCheck;
+                        chain.ChainPolicy.RevocationFlag = X509RevocationFlag.EntireChain;
+                        chain.ChainPolicy.VerificationFlags = X509VerificationFlags.NoFlag;
+                        chain.ChainPolicy.DisableCertificateDownloads = false;
+                        chain.ChainPolicy.UrlRetrievalTimeout = TimeSpan.FromSeconds(5);
+
+                        foreach (var extraCert in embeddedCerts)
+                        {
+                            if (string.Equals(extraCert.Thumbprint, signerCert.Thumbprint, StringComparison.OrdinalIgnoreCase))
+                                continue;
+
+                            chain.ChainPolicy.ExtraStore.Add(extraCert);
+                        }
+
+                        item.TrustedChain = chain.Build(signerCert);
+                        item.ChainStatus = chain.ChainStatus == null || chain.ChainStatus.Length == 0
+                            ? "OK"
+                            : string.Join(", ", chain.ChainStatus.Select(x => x.Status.ToString()).Distinct());
+                    }
+                    else
+                    {
+                        item.TrustedChain = false;
+                        item.ChainStatus = "İmzacı sertifikası okunamadı.";
+                    }
+
+                    if (item.IntegrityValid)
+                        result.CryptographicallyValidCount++;
+                    if (item.TrustedChain)
+                        result.TrustedChainCount++;
+
+                    result.Signatures.Add(item);
+                }
+
+                result.SignatureCount = result.Signatures.Count;
+                result.Success = true;
+
+                if (result.SignatureCount == 0)
+                {
+                    result.Message = "PDF içinde imza alanı bulunamadı.";
+                }
+                else if (result.TrustedChainCount == result.SignatureCount)
+                {
+                    result.Message = "Tüm imzalar güvenilir zincire bağlandı.";
+                }
+                else if (result.CryptographicallyValidCount == result.SignatureCount)
+                {
+                    result.Message = "İmzalar matematiksel olarak geçerli, ancak bazı zincirler güvenilir değil.";
+                }
+                else
+                {
+                    result.Message = "Bazı imzalar doğrulanamadı.";
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "PDF imza doğrulama sırasında hata oluştu.");
+                result.Success = false;
+                result.Message = ex.Message;
+            }
+
+            return result;
+        }
+
+        private static X509Certificate2? ToX509Certificate2(IX509Certificate? certificate)
+        {
+            if (certificate == null)
+                return null;
+
+            try
+            {
+                return new X509Certificate2(certificate.GetEncoded());
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        private static IReadOnlyList<X509Certificate2> ToX509Certificates(IX509Certificate[]? certificates)
+        {
+            var result = new List<X509Certificate2>();
+            if (certificates == null || certificates.Length == 0)
+                return result;
+
+            foreach (var cert in certificates)
+            {
+                var converted = ToX509Certificate2(cert);
+                if (converted != null)
+                    result.Add(converted);
+            }
+
+            return result;
         }
 
         private static bool IsSessionHandleInvalid(Pkcs11Exception ex)
